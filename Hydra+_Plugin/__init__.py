@@ -5,10 +5,10 @@ Multi-headed Spotify → Soulseek bridge with intelligent auto-download.
 Connects to the bridge server to receive track searches from the browser
 extension and automatically triggers searches in Nicotine+.
 
-Version: 0.1.0
+Version: 0.1.2
 """
 
-__version__ = "0.1.0"
+__version__ = "0.1.2"
 
 from pynicotine.pluginsystem import BasePlugin
 from pynicotine.events import events
@@ -71,12 +71,14 @@ class Plugin(BasePlugin):
         # Runtime state
         self.running = False
         self.thread = None
-        self.processed_timestamps = set()  # Track processed searches to avoid duplicates
+        self.processed_timestamps = {}  # Track processed searches with timestamps {search_ts: processed_at}
         self.server_process = None  # Track server process if we started it
         self.active_searches = {}  # Track searches with metadata and ranked download candidates
         self.active_downloads = {}  # Track {virtual_path: search_token} for fallback
         self.nicotine_online = False  # Track if Nicotine+ is connected to the network
         self.waiting_for_connection = False  # Track if we're waiting for connection
+        self.server_was_running = False  # Track if server was previously running
+        self.last_cleanup_time = time.time()  # Track last cleanup of old data
 
         # Get plugin directory and server path
         self.plugin_dir = os.path.dirname(os.path.abspath(__file__))
@@ -248,7 +250,8 @@ class Plugin(BasePlugin):
         """Fetch pending searches from the bridge server."""
         try:
             req = Request(self.pending_endpoint)
-            with urlopen(req, timeout=5) as response:
+            # Increased timeout to 30s since metadata processing can be slow
+            with urlopen(req, timeout=30) as response:
                 data = json.loads(response.read().decode('utf-8'))
                 return data.get('searches', [])
         except URLError as e:
@@ -258,7 +261,10 @@ class Plugin(BasePlugin):
                 self._last_error_time = time.time()
             return []
         except Exception as e:
-            self.log(f"[Hydra+] Error fetching searches: {e}")
+            # Suppress timeout errors from logging since they're normal during metadata processing
+            error_msg = str(e)
+            if 'timed out' not in error_msg:
+                self.log(f"[Hydra+] Error fetching searches: {e}")
             return []
 
     def _mark_processed(self, timestamp):
@@ -267,12 +273,52 @@ class Plugin(BasePlugin):
             data = json.dumps({'timestamp': timestamp}).encode('utf-8')
             req = Request(self.mark_processed_endpoint, data=data, headers={'Content-Type': 'application/json'})
 
-            with urlopen(req, timeout=5) as response:
+            # Increased timeout to match _get_pending_searches
+            with urlopen(req, timeout=30) as response:
                 result = json.loads(response.read().decode('utf-8'))
                 return result.get('success', False)
         except Exception as e:
-            self.log(f"[Hydra+] Error marking processed: {e}")
+            # Suppress timeout errors from logging
+            error_msg = str(e)
+            if 'timed out' not in error_msg:
+                self.log(f"[Hydra+] Error marking processed: {e}")
             return False
+
+    def _cleanup_old_data(self):
+        """Cleanup old processed timestamps and stale searches to prevent memory leaks."""
+        try:
+            current_time = time.time()
+
+            # Only cleanup every 5 minutes to reduce overhead
+            if current_time - self.last_cleanup_time < 300:
+                return
+
+            self.last_cleanup_time = current_time
+
+            # Clean up processed timestamps older than 1 hour
+            one_hour_ago = current_time - 3600
+            old_timestamps = [ts for ts, processed_at in self.processed_timestamps.items()
+                            if processed_at < one_hour_ago]
+
+            for ts in old_timestamps:
+                del self.processed_timestamps[ts]
+
+            if old_timestamps:
+                self.log(f"[Hydra+] Cleaned {len(old_timestamps)} old processed timestamps")
+
+            # Clean up stale active searches (older than 10 minutes)
+            ten_minutes_ago = current_time - 600
+            stale_searches = [token for token, info in self.active_searches.items()
+                            if info.get('timestamp', current_time) < ten_minutes_ago]
+
+            for token in stale_searches:
+                del self.active_searches[token]
+
+            if stale_searches:
+                self.log(f"[Hydra+] Cleaned {len(stale_searches)} stale active searches")
+
+        except Exception as e:
+            self.log(f"[Hydra+] Error in cleanup: {e}")
 
     def _trigger_search(self, query, artist='', track='', album='', track_id='', duration=0, auto_download=False, metadata_override=True, search_type='track'):
         """
@@ -1416,7 +1462,7 @@ class Plugin(BasePlugin):
     def _process_album_metadata_batch(self, downloaded_tracks, search_info):
         """
         Process metadata for all album tracks in sequence.
-        This avoids concurrent processing issues by handling one track at a time.
+        IMPROVED: Reduced delays to prevent track 3 crash.
 
         Updates the downloaded_tracks list with renamed file paths.
         """
@@ -1426,13 +1472,14 @@ class Plugin(BasePlugin):
         successful = 0
         failed = 0
 
+        self.log(f"[Hydra+: ALBUM-META] Starting batch of {total_tracks} tracks...")
+
         for i, track_data in enumerate(downloaded_tracks):
             try:
                 file_path = track_data['file_path']
                 track_info = track_data['track_info']
             except (KeyError, TypeError) as e:
                 self.log(f"[Hydra+: ALBUM-META] ✗ Invalid track data at index {i}: {e}")
-                self.log(f"[Hydra+: ALBUM-META] DEBUG: track_data = {track_data}")
                 failed += 1
                 continue
 
@@ -1440,6 +1487,7 @@ class Plugin(BasePlugin):
                 self.log(f"[Hydra+: ALBUM-META] Processing {i + 1}/{total_tracks}: {track_info.get('track', 'Unknown')}")
 
                 # Process this track's metadata (returns success and new path)
+                # CRITICAL FIX: Reduced timeout to 15s (server responds immediately after rename)
                 success, new_path = self._process_single_track_metadata(file_path, track_info)
 
                 if success:
@@ -1451,21 +1499,24 @@ class Plugin(BasePlugin):
                     failed += 1
                     self.log(f"[Hydra+: ALBUM-META] ✗ Track {i + 1}/{total_tracks} failed")
 
-                # Small delay between tracks to avoid overwhelming the server
-                if i < total_tracks - 1:  # Don't delay after last track
-                    time.sleep(1)
+                # CRITICAL FIX: Minimal delay (server now responds immediately)
+                # No need for 1s delay since server replies after rename
+                if i < total_tracks - 1:
+                    time.sleep(0.1)  # Just 100ms to avoid overwhelming
 
             except Exception as e:
                 self.log(f"[Hydra+: ALBUM-META] ✗ Exception processing track {i + 1}: {e}")
                 import traceback
                 self.log(f"[Hydra+: ALBUM-META] Traceback: {traceback.format_exc()}")
                 failed += 1
+                # Continue with next track even on error
 
         self.log(f"[Hydra+: ALBUM-META] ✓ Batch complete: {successful} succeeded, {failed} failed")
 
     def _process_single_track_metadata(self, file_path, track_info):
         """
         Process metadata for a single track.
+        IMPROVED: Reduced timeout since server now responds immediately after rename.
 
         Returns:
             Tuple of (success: bool, new_path: str)
@@ -1497,13 +1548,14 @@ class Plugin(BasePlugin):
                 'track_number': track_info.get('track_number', 0)
             }
 
-            # Send to Node server with timeout
+            # Send to Node server with REDUCED timeout (server responds immediately now)
             url = f"{self.settings['bridge_url']}/process-metadata"
             req = Request(url,
                          data=json.dumps(payload).encode('utf-8'),
                          headers={'Content-Type': 'application/json'})
 
-            with urlopen(req, timeout=30) as response:
+            # CRITICAL FIX: Timeout reduced to 15s (server replies after rename, not after full processing)
+            with urlopen(req, timeout=15) as response:
                 result = json.loads(response.read().decode('utf-8'))
 
                 if result.get('success'):
@@ -1517,7 +1569,12 @@ class Plugin(BasePlugin):
                     return (False, file_path)
 
         except URLError as e:
-            self.log(f"[Hydra+: ALBUM-META] ✗ Cannot reach Node server: {e}")
+            error_msg = str(e)
+            # Only log if not a timeout (timeouts are less critical now)
+            if 'timed out' in error_msg:
+                self.log(f"[Hydra+: ALBUM-META] ⚠ Timeout (continuing): {file_path}")
+            else:
+                self.log(f"[Hydra+: ALBUM-META] ✗ Cannot reach Node server: {e}")
             return (False, file_path)
         except Exception as e:
             self.log(f"[Hydra+: ALBUM-META] ✗ Error: {e}")
@@ -1966,6 +2023,18 @@ class Plugin(BasePlugin):
 
         while self.running:
             try:
+                # Check if server is running and warn if it went offline
+                server_running = self._is_server_running()
+                if self.server_was_running and not server_running:
+                    # Server went offline!
+                    self.log("════════════════════════════════════════════════════════════════")
+                    self.log("  ⚠️  KILL SERVER - Please restart Nicotine+ manually")
+                    self.log("  This will restart the server with updated settings")
+                    self.log("════════════════════════════════════════════════════════════════")
+                    self.server_was_running = False
+                elif server_running:
+                    self.server_was_running = True
+
                 # Periodically check connection status (but don't block)
                 # Only check every 30 seconds to avoid overhead
                 if hasattr(self, '_last_connection_check'):
@@ -1987,6 +2056,9 @@ class Plugin(BasePlugin):
                     # Skip if we've already processed this timestamp
                     if timestamp in self.processed_timestamps:
                         continue
+
+                    # Periodic cleanup of old data
+                    self._cleanup_old_data()
 
                     # Check if this is an album search or track search
                     search_type = search.get('type', 'track')
@@ -2014,8 +2086,8 @@ class Plugin(BasePlugin):
                         # Mark as processed on server
                         self._mark_processed(timestamp)
 
-                        # Track locally to prevent duplicates
-                        self.processed_timestamps.add(timestamp)
+                        # Track locally to prevent duplicates (with cleanup timestamp)
+                        self.processed_timestamps[timestamp] = time.time()
 
                         # Add a small delay between searches
                         time.sleep(0.5)

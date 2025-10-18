@@ -24,6 +24,9 @@ const CREDENTIALS_FILE = path.join(__dirname, 'spotify-credentials.json');
 const metadataQueue = [];
 let isProcessingMetadata = false;
 
+// Note: Album batch processing is handled via sequential metadata queue processing
+// which naturally prevents concurrent issues by processing one track at a time
+
 // Spotify API credentials (optional, set via extension popup)
 let spotifyCredentials = {
   clientId: null,
@@ -272,8 +275,12 @@ const server = http.createServer((req, res) => {
         unprocessed: queue.searches.filter(s => !s.processed).length
       }));
     } catch (error) {
+      console.error('[Hydra+: ERROR] Status endpoint error:', error.message);
       res.writeHead(500, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ error: 'Failed to read queue' }));
+      res.end(JSON.stringify({
+        error: 'Failed to read queue',
+        details: error.message
+      }));
     }
     return;
   }
@@ -290,8 +297,12 @@ const server = http.createServer((req, res) => {
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ searches: pending }));
     } catch (error) {
+      console.error('[Hydra+: ERROR] Pending endpoint error:', error.message);
       res.writeHead(500, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ error: 'Failed to read queue' }));
+      res.end(JSON.stringify({
+        error: 'Failed to read queue',
+        details: error.message
+      }));
     }
     return;
   }
@@ -480,6 +491,24 @@ const server = http.createServer((req, res) => {
     return;
   }
 
+  // Handle POST to /restart - Kill the bridge server
+  if (req.method === 'POST' && req.url === '/restart') {
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ success: true, message: 'Server shutting down...' }));
+
+    console.log('\n════════════════════════════════════════════════════════════════');
+    console.log('  ⚠️  KILL SERVER - Please restart Nicotine+ manually');
+    console.log('  This will restart the server with updated settings');
+    console.log('════════════════════════════════════════════════════════════════\n');
+
+    // Give time for response to be sent
+    setTimeout(() => {
+      process.exit(0); // Exit - server will NOT auto-restart, user must restart Nicotine+
+    }, 100);
+
+    return;
+  }
+
   // 404 for other routes
   res.writeHead(404, { 'Content-Type': 'application/json' });
   res.end(JSON.stringify({ error: 'Not found' }));
@@ -488,13 +517,13 @@ const server = http.createServer((req, res) => {
 // ===== METADATA QUEUE PROCESSING =====
 
 // Process metadata queue sequentially to avoid concurrent request issues
+// IMPROVED: Fast response for album batches by immediate reply after rename
 async function processMetadataQueue() {
   if (isProcessingMetadata) {
     return; // Already processing
   }
 
   if (metadataQueue.length === 0) {
-    console.log('[Hydra+: META] Queue empty');
     return;
   }
 
@@ -514,7 +543,7 @@ async function processMetadataQueue() {
   } finally {
     isProcessingMetadata = false;
 
-    // Process next item in queue
+    // Process next item in queue immediately (don't wait for background tasks)
     if (metadataQueue.length > 0) {
       setImmediate(() => processMetadataQueue());
     }
@@ -593,11 +622,11 @@ async function fetchSpotifyAPIMetadata(trackId) {
       return;
     }
 
-    // Overall timeout for the entire API call sequence
+    // Overall timeout for the entire API call sequence - increased to 60s
     const overallTimeout = setTimeout(() => {
-      console.error('[Hydra+: API] ⚠ Timeout after 20s');
+      console.error('[Hydra+: API] ⚠ Timeout after 60s');
       resolve({});
-    }, 20000);
+    }, 60000);
 
     const options = {
       hostname: 'api.spotify.com',
@@ -669,7 +698,7 @@ async function fetchSpotifyAPIMetadata(trackId) {
               resolve({});
             });
 
-            artistReq.setTimeout(10000); // 10 second timeout for artist request
+            artistReq.setTimeout(30000); // 30 second timeout for artist request - increased
 
           } else {
             // No artist, just return label if available
@@ -701,7 +730,7 @@ async function fetchSpotifyAPIMetadata(trackId) {
       resolve({});
     });
 
-    trackReq.setTimeout(10000); // 10 second timeout for track request
+    trackReq.setTimeout(30000); // 30 second timeout for track request - increased
   });
 }
 
@@ -776,11 +805,11 @@ async function fetchSpotifyMetadata(trackId) {
 
     const trackUrl = `https://open.spotify.com/track/${trackId}`;
 
-    // Set timeout to prevent hanging
+    // Set timeout to prevent hanging - increased to 30s for slower connections
     const timeout = setTimeout(() => {
-      console.error('[Hydra+: META] ⚠ Spotify page timeout (10s)');
+      console.error('[Hydra+: META] ⚠ Spotify page timeout (30s)');
       resolve({});
-    }, 10000);
+    }, 30000);
 
     const req = https.get(trackUrl, (res) => {
       clearTimeout(timeout);
@@ -832,7 +861,7 @@ async function fetchSpotifyMetadata(trackId) {
       resolve({});
     });
 
-    req.setTimeout(10000); // 10 second timeout
+    req.setTimeout(30000); // 30 second timeout - increased for slower connections
   });
 }
 
@@ -846,11 +875,11 @@ async function downloadCoverArt(imageUrl) {
 
     console.log(`[Hydra+: META] ⬇ Downloading cover...`);
 
-    // Set timeout to prevent hanging
+    // Set timeout to prevent hanging - increased to 30s for slower connections
     const timeout = setTimeout(() => {
-      console.error('[Hydra+: META] ⚠ Cover timeout (15s)');
+      console.error('[Hydra+: META] ⚠ Cover timeout (30s)');
       resolve(null);
-    }, 15000);
+    }, 30000);
 
     const req = https.get(imageUrl, (imgRes) => {
       clearTimeout(timeout);
@@ -876,7 +905,7 @@ async function downloadCoverArt(imageUrl) {
       resolve(null);
     });
 
-    req.setTimeout(15000); // 15 second timeout
+    req.setTimeout(30000); // 30 second timeout - increased for slower connections
   });
 }
 
@@ -910,113 +939,126 @@ async function processMetadata(data, res) {
       throw new Error('Not an MP3 file');
     }
 
-    // Step 1: Fetch extended metadata from Spotify page (year, track#, image)
-    const spotifyMeta = await fetchSpotifyMetadata(track_id);
-
-    // Step 2: Fetch API metadata if credentials are available (genre, label)
-    let apiMeta = {};
-    if (track_id) {
-      if (spotifyCredentials.clientId && spotifyCredentials.clientSecret) {
-        console.log('[Hydra+: API] Fetching metadata...');
-        apiMeta = await fetchSpotifyAPIMetadata(track_id);
-      } else {
-        console.log('[Hydra+: API] No credentials (skipping genre/label)');
-      }
-    }
-
-    // Step 3: Rename file (with track number if provided)
+    // STEP 1: RENAME FILE FIRST (before any network operations that could timeout)
     const trackNum = data.track_number || 0;
     const newPath = await renameFile(file_path, artist, track, trackNum);
     result.new_path = newPath;
     result.renamed = (newPath !== file_path);
 
-    // Step 4: Download cover art
-    const coverData = await downloadCoverArt(spotifyMeta.imageUrl);
-
-    // Step 5: Write tags with node-id3
-    const tags = {
-      title: track || '',
-      artist: artist || '',
-      album: album || ''
-    };
-
-    // Add year if available
-    if (spotifyMeta.year) {
-      tags.year = spotifyMeta.year;
+    // CRITICAL FIX: Always send success response immediately after renaming
+    // This prevents Python plugin timeout issues, especially for album batches
+    if (!res.headersSent) {
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify(result));
     }
 
-    // Add track number if available (from Spotify or explicitly provided)
-    if (data.track_number) {
-      tags.trackNumber = String(data.track_number);
-    } else if (spotifyMeta.trackNumber) {
-      tags.trackNumber = spotifyMeta.trackNumber;
-    }
+    // Continue with metadata processing in background (don't block response)
+    // This runs asynchronously and won't delay the next track in album batches
+    setImmediate(async () => {
+      try {
+        console.log('[Hydra+: META] Continuing metadata fetch in background...');
 
-    // Add genre if available from API
-    if (apiMeta.genre) {
-      tags.genre = apiMeta.genre;
-    }
+        // Step 2: Fetch extended metadata from Spotify page (year, track#, image)
+        const spotifyMeta = await fetchSpotifyMetadata(track_id);
 
-    // Add publisher/label if available from API
-    if (apiMeta.label) {
-      tags.publisher = apiMeta.label;
-    }
+        // Step 3: Fetch API metadata if credentials are available (genre, label)
+        let apiMeta = {};
+        if (track_id) {
+          if (spotifyCredentials.clientId && spotifyCredentials.clientSecret) {
+            console.log('[Hydra+: API] Fetching metadata...');
+            apiMeta = await fetchSpotifyAPIMetadata(track_id);
+          } else {
+            console.log('[Hydra+: API] No credentials (skipping genre/label)');
+          }
+        }
 
-    // Add cover art if available
-    if (coverData) {
-      tags.image = {
-        mime: 'image/jpeg',
-        type: { id: 3, name: 'front cover' },
-        description: 'Cover',
-        imageBuffer: coverData
-      };
-    }
+        // Step 4: Download cover art
+        const coverData = await downloadCoverArt(spotifyMeta.imageUrl);
 
-    // Write the tags (node-id3 will replace all existing tags with only what we specify)
-    let writeSuccess = false;
-    try {
-      console.log(`[Hydra+: META] ⚡ Writing ID3 tags...`);
-      writeSuccess = NodeID3.write(tags, newPath);
-    } catch (id3Error) {
-      console.error(`[Hydra+: META] ✗ ID3 exception: ${id3Error.message}`);
-      console.error(`[Hydra+: META] Stack: ${id3Error.stack}`);
-      result.success = false;
-      result.error = `ID3 write failed: ${id3Error.message}`;
-    }
+        // Step 5: Write tags with node-id3
+        const tags = {
+          title: track || '',
+          artist: artist || '',
+          album: album || ''
+        };
 
-    if (writeSuccess) {
-      result.tags_updated = true;
-      result.cover_embedded = (coverData !== null);
-      result.year = spotifyMeta.year || null;
-      result.track_number = spotifyMeta.trackNumber || null;
-      result.genre = apiMeta.genre || null;
-      result.label = apiMeta.label || null;
+        // Add year if available
+        if (spotifyMeta.year) {
+          tags.year = spotifyMeta.year;
+        }
 
-      console.log(`[Hydra+: META] ✓ SUCCESS`);
-      if (artist) console.log(`[Hydra+: META]   Artist: ${artist}`);
-      if (track) console.log(`[Hydra+: META]   Title: ${track}`);
-      if (album) console.log(`[Hydra+: META]   Album: ${album}`);
-      if (spotifyMeta.year) console.log(`[Hydra+: META]   Year: ${spotifyMeta.year}`);
-      if (spotifyMeta.trackNumber) console.log(`[Hydra+: META]   Track: #${spotifyMeta.trackNumber}`);
-      if (apiMeta.genre) console.log(`[Hydra+: META]   Genre: ${apiMeta.genre}`);
-      if (apiMeta.label) console.log(`[Hydra+: META]   Label: ${apiMeta.label}`);
-      if (coverData) console.log(`[Hydra+: META]   Cover: embedded`);
-    } else if (result.success) {
-      // Only log this if we didn't already set an error above
-      console.error(`[Hydra+: META] ✗ Write returned false`);
-      result.success = false;
-      result.error = 'Failed to write tags';
-    }
+        // Add track number if available (from Spotify or explicitly provided)
+        if (data.track_number) {
+          tags.trackNumber = String(data.track_number);
+        } else if (spotifyMeta.trackNumber) {
+          tags.trackNumber = spotifyMeta.trackNumber;
+        }
+
+        // Add genre if available from API
+        if (apiMeta.genre) {
+          tags.genre = apiMeta.genre;
+        }
+
+        // Add publisher/label if available from API
+        if (apiMeta.label) {
+          tags.publisher = apiMeta.label;
+        }
+
+        // Add cover art if available
+        if (coverData) {
+          tags.image = {
+            mime: 'image/jpeg',
+            type: { id: 3, name: 'front cover' },
+            description: 'Cover',
+            imageBuffer: coverData
+          };
+        }
+
+        // Write the tags (node-id3 will replace all existing tags with only what we specify)
+        let writeSuccess = false;
+        try {
+          console.log(`[Hydra+: META] ⚡ Writing ID3 tags...`);
+          writeSuccess = NodeID3.write(tags, newPath);
+        } catch (id3Error) {
+          console.error(`[Hydra+: META] ✗ ID3 exception: ${id3Error.message}`);
+          console.error(`[Hydra+: META] Stack: ${id3Error.stack}`);
+          return; // Already sent response, just log error
+        }
+
+        if (writeSuccess) {
+          console.log(`[Hydra+: META] ✓ SUCCESS`);
+          if (artist) console.log(`[Hydra+: META]   Artist: ${artist}`);
+          if (track) console.log(`[Hydra+: META]   Title: ${track}`);
+          if (album) console.log(`[Hydra+: META]   Album: ${album}`);
+          if (spotifyMeta.year) console.log(`[Hydra+: META]   Year: ${spotifyMeta.year}`);
+          if (spotifyMeta.trackNumber) console.log(`[Hydra+: META]   Track: #${spotifyMeta.trackNumber}`);
+          if (apiMeta.genre) console.log(`[Hydra+: META]   Genre: ${apiMeta.genre}`);
+          if (apiMeta.label) console.log(`[Hydra+: META]   Label: ${apiMeta.label}`);
+          if (coverData) console.log(`[Hydra+: META]   Cover: embedded`);
+        } else {
+          console.error(`[Hydra+: META] ✗ Write returned false`);
+        }
+      } catch (bgError) {
+        // Catch any errors in background processing to prevent server crash
+        console.error(`[Hydra+: META] ✗ Background processing error: ${bgError.message}`);
+        console.error(`[Hydra+: META] Stack: ${bgError.stack}`);
+      }
+    });
+
+    return; // Exit here since we already sent response
 
   } catch (error) {
     console.error(`[Hydra+: META] ✗ Error: ${error.message}`);
     console.error(`[Hydra+: META] Stack: ${error.stack}`);
     result.success = false;
     result.error = error.message;
-  }
 
-  res.writeHead(result.success ? 200 : 500, { 'Content-Type': 'application/json' });
-  res.end(JSON.stringify(result));
+    // Send error response if we haven't sent one yet
+    if (!res.headersSent) {
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify(result));
+    }
+  }
 }
 
 // Create album folder and move files

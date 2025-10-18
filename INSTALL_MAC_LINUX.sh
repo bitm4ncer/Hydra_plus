@@ -19,7 +19,7 @@ echo ""
 echo -e "${GREEN}  ========================================================================${NC}"
 echo ""
 echo "                   H Y D R A +   I N S T A L L E R"
-echo "                     Nicotine+ Browser Link v0.1.0"
+echo "                     Nicotine+ Browser Link v0.1.2"
 echo ""
 echo -e "${GREEN}  ========================================================================${NC}"
 echo ""
@@ -114,7 +114,7 @@ else
     OS_NAME="Linux"
 fi
 
-PLUGIN_NAME="Hydra+_0.1.0_Plugin"
+PLUGIN_NAME="Hydra+_Plugin"
 PLUGIN_DEST="$NICOTINE_PLUGINS/$PLUGIN_NAME"
 SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 
@@ -159,7 +159,7 @@ fi
 echo "  Copying plugin files..."
 echo ""
 
-if [ ! -f "$SCRIPT_DIR/Hydra+_0.1.0_Extension/popup.js" ]; then
+if [ ! -f "$SCRIPT_DIR/Hydra+_Extension/popup.js" ]; then
     echo -e "${RED}  +-------------------------------------------------------------------+${NC}"
     echo -e "${RED}  |  ERROR: Source files not found!                                  |${NC}"
     echo -e "${RED}  +-------------------------------------------------------------------+${NC}"
@@ -169,17 +169,17 @@ if [ ! -f "$SCRIPT_DIR/Hydra+_0.1.0_Extension/popup.js" ]; then
     exit 1
 fi
 
-if [ ! -f "$SCRIPT_DIR/Hydra+_0.1.0_Plugin/__init__.py" ]; then
+if [ ! -f "$SCRIPT_DIR/Hydra+_Plugin/__init__.py" ]; then
     echo -e "${RED}  +-------------------------------------------------------------------+${NC}"
     echo -e "${RED}  |  ERROR: Plugin files not found!                                  |${NC}"
     echo -e "${RED}  +-------------------------------------------------------------------+${NC}"
     echo ""
-    echo "  Expected: $SCRIPT_DIR/Hydra+_0.1.0_Plugin/"
+    echo "  Expected: $SCRIPT_DIR/Hydra+_Plugin/"
     echo ""
     exit 1
 fi
 
-cp -R "$SCRIPT_DIR/Hydra+_0.1.0_Plugin" "$PLUGIN_DEST"
+cp -R "$SCRIPT_DIR/Hydra+_Plugin" "$PLUGIN_DEST"
 
 if [ $? -eq 0 ]; then
     echo -e "${GREEN}  +-------------------------------------------------------------------+${NC}"
@@ -256,7 +256,7 @@ echo "  Copying extension files..."
 echo ""
 
 mkdir -p "$EXTENSION_DEST"
-cp -R "$SCRIPT_DIR/Hydra+_0.1.0_Extension/"* "$EXTENSION_DEST/"
+cp -R "$SCRIPT_DIR/Hydra+_Extension/"* "$EXTENSION_DEST/"
 
 if [ $? -eq 0 ]; then
     echo -e "${GREEN}  +-------------------------------------------------------------------+${NC}"

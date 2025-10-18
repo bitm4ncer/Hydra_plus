@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Nicotine+ Hydra+",
-  "version": "0.1.0",
+  "version": "0.1.2",
   "description": "Multi-headed Spotify → Soulseek bridge with auto-download and metadata management",
   "icons": {
     "16": "icon/icon-16.png",

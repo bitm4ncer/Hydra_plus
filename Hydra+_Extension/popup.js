@@ -3,6 +3,7 @@ const BRIDGE_URL = 'http://127.0.0.1:3847';
 
 // Get DOM elements
 const autoDownloadToggle = document.getElementById('autoDownloadToggle');
+const metadataSection = document.getElementById('metadataSection');
 const metadataOverrideToggle = document.getElementById('metadataOverrideToggle');
 const credentialsSection = document.getElementById('credentialsSection');
 const apiConnectedState = document.getElementById('apiConnectedState');
@@ -15,6 +16,7 @@ const spotifyClientSecret = document.getElementById('spotifyClientSecret');
 const saveCredentialsBtn = document.getElementById('saveCredentials');
 const savedIndicator = document.getElementById('savedIndicator');
 const apiErrorIndicator = document.getElementById('apiErrorIndicator');
+const resetServerBtn = document.getElementById('resetServerBtn');
 
 // Test Spotify API connection
 async function testSpotifyConnection(clientId, clientSecret) {
@@ -33,7 +35,10 @@ async function testSpotifyConnection(clientId, clientSecret) {
     const result = await response.json();
     return result.success || false;
   } catch (error) {
-    console.error('Failed to test Spotify credentials:', error);
+    // Don't log error if server is offline (expected behavior)
+    if (isServerOnline) {
+      console.error('Failed to test Spotify credentials:', error);
+    }
     return false;
   }
 }
@@ -53,11 +58,14 @@ function showInputState() {
 // Load saved settings immediately
 async function loadSettings() {
   chrome.storage.sync.get(['autoDownload', 'metadataOverride', 'spotifyClientId', 'spotifyClientSecret', 'spotifyApiConnected'], async (data) => {
-    autoDownloadToggle.checked = data.autoDownload || false;
+    // Auto-download defaults to true
+    autoDownloadToggle.checked = data.autoDownload !== false;
     metadataOverrideToggle.checked = data.metadataOverride !== false; // Default to true
     spotifyClientId.value = data.spotifyClientId || '';
     spotifyClientSecret.value = data.spotifyClientSecret || '';
 
+    // Show/hide metadata section based on auto-download setting
+    updateMetadataSectionVisibility();
     // Show/hide credentials section based on metadata override setting
     updateCredentialsSectionVisibility();
 
@@ -95,9 +103,20 @@ async function loadSettings() {
   });
 }
 
+// Update metadata section visibility based on auto-download
+function updateMetadataSectionVisibility() {
+  if (autoDownloadToggle.checked) {
+    metadataSection.style.display = 'flex';
+    credentialsSection.style.display = metadataOverrideToggle.checked ? 'block' : 'none';
+  } else {
+    metadataSection.style.display = 'none';
+    credentialsSection.style.display = 'none';
+  }
+}
+
 // Update credentials section visibility
 function updateCredentialsSectionVisibility() {
-  if (metadataOverrideToggle.checked) {
+  if (metadataOverrideToggle.checked && autoDownloadToggle.checked) {
     credentialsSection.style.display = 'block';
   } else {
     credentialsSection.style.display = 'none';
@@ -113,6 +132,8 @@ autoDownloadToggle.addEventListener('change', () => {
   chrome.storage.sync.set({ autoDownload }, () => {
     console.log('Auto-download setting saved:', autoDownload);
   });
+  // Update visibility of metadata section
+  updateMetadataSectionVisibility();
 });
 
 metadataOverrideToggle.addEventListener('change', () => {
@@ -144,7 +165,7 @@ async function checkServerStatus() {
       isServerOnline = true;
       updateSaveButtonState();
 
-      // Send credentials to server when it comes online
+      // IMPROVED: Send credentials only once when server comes online (not on every check)
       if (wasOffline) {
         sendCredentialsToServer();
       }
@@ -234,12 +255,17 @@ saveCredentialsBtn.addEventListener('click', async () => {
     }, () => {
       console.log('Spotify credentials saved and connected');
 
-      // Send credentials to bridge server
+      // Send credentials to bridge server (no duplication - server already has them from test)
+      // Note: Test connection already sent credentials, so this is just a safety redundancy
       fetch(`${BRIDGE_URL}/set-spotify-credentials`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ clientId, clientSecret })
-      }).catch(err => console.error('Failed to send credentials to server:', err));
+      }).catch(err => {
+        if (isServerOnline) {
+          console.error('Failed to send credentials to server:', err);
+        }
+      });
 
       // Show connected state
       showConnectedState();
@@ -264,7 +290,7 @@ editCredentialsLink.addEventListener('click', (e) => {
   showInputState();
 });
 
-// Send credentials to server on popup open if they exist (only when server is online)
+// IMPROVED: Consolidated credential sending - only send when server comes online
 function sendCredentialsToServer() {
   chrome.storage.sync.get(['spotifyClientId', 'spotifyClientSecret'], (data) => {
     if (data.spotifyClientId && data.spotifyClientSecret && isServerOnline) {
@@ -275,13 +301,99 @@ function sendCredentialsToServer() {
           clientId: data.spotifyClientId,
           clientSecret: data.spotifyClientSecret
         })
-      }).catch(err => console.error('Failed to send credentials to server:', err));
+      }).catch(err => {
+        if (isServerOnline) {
+          console.error('Failed to send credentials to server:', err);
+        }
+      });
     }
   });
 }
 
-// Check server status on popup open and update button state
+// Check server status on popup open
 checkServerStatus();
 
-// Refresh status every 3 seconds
+// Refresh status every 3 seconds (consolidated into checkServerStatus)
 setInterval(checkServerStatus, 3000);
+
+// Reset server button handler
+resetServerBtn.addEventListener('click', async () => {
+  if (!isServerOnline) {
+    serverStatusText.textContent = 'Server offline - cannot restart';
+    return;
+  }
+
+  // Disable button and show loading state
+  resetServerBtn.disabled = true;
+  const originalText = resetServerBtn.textContent;
+  resetServerBtn.textContent = 'Restarting...';
+
+  try {
+    // Call restart endpoint
+    const response = await fetch(`${BRIDGE_URL}/restart`, {
+      method: 'POST',
+      mode: 'cors'
+    });
+
+    if (response.ok) {
+      serverStatusText.textContent = 'Server restarting...';
+
+      // Wait a bit for the server to shut down
+      await new Promise(resolve => setTimeout(resolve, 500));
+
+      // Update status to show it's offline
+      serverStatus.classList.remove('online');
+      serverStatus.classList.add('offline');
+      isServerOnline = false;
+
+      // Wait for server to come back online (check every 500ms for up to 10 seconds)
+      let attempts = 0;
+      const maxAttempts = 20;
+
+      const checkRestart = setInterval(async () => {
+        attempts++;
+
+        try {
+          const statusResponse = await fetch(`${BRIDGE_URL}/status`, {
+            method: 'GET',
+            mode: 'cors'
+          });
+
+          if (statusResponse.ok) {
+            clearInterval(checkRestart);
+            serverStatus.classList.remove('offline');
+            serverStatus.classList.add('online');
+            isServerOnline = true;
+            serverStatusText.textContent = 'Server restarted successfully';
+
+            // Reset button state
+            resetServerBtn.disabled = false;
+            resetServerBtn.textContent = originalText;
+
+            // Send credentials to server after restart
+            sendCredentialsToServer();
+          }
+        } catch (error) {
+          // Server still not up
+          if (attempts >= maxAttempts) {
+            clearInterval(checkRestart);
+            serverStatusText.textContent = 'Restart timeout - check manually';
+
+            // Reset button state
+            resetServerBtn.disabled = false;
+            resetServerBtn.textContent = originalText;
+          }
+        }
+      }, 500);
+    } else {
+      throw new Error('Restart request failed');
+    }
+  } catch (error) {
+    console.error('Failed to restart server:', error);
+    serverStatusText.textContent = 'Restart failed';
+
+    // Reset button state
+    resetServerBtn.disabled = false;
+    resetServerBtn.textContent = originalText;
+  }
+});

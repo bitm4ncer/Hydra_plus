@@ -14,7 +14,7 @@ $$$$$$$ `$$$$$$$ ;$$$$;  $$$$l$$$$;  $$$$;   $$$$     $$$$;   $$$$$$~  :$$$$$$$$
                      L*@@*!'
 
 ===============================================================================
-                             --- v0.1.0 ---
+                             --- v0.1.2 ---
 
           SPOTIFY → SOULSEEK BRIDGE  |  Multi-headed auto-download beast 
 
@@ -57,7 +57,7 @@ $$$$$$$ `$$$$$$$ ;$$$$;  $$$$l$$$$;  $$$$;   $$$$     $$$$;   $$$$$$~  :$$$$$$$$
 
   1. Download & Extract
      → Go to: github.com/bitm4ncer/Hydra_plus/releases
-     → Download: Hydra+ 0.1.0 (ZIP)
+     → Download: Hydra+ 0.1.2 (ZIP)
      → Right-click ZIP → Extract All
 
   2. Run Installer
@@ -85,8 +85,8 @@ $$$$$$$ `$$$$$$$ ;$$$$;  $$$$l$$$$;  $$$$;   $$$$     $$$$;   $$$$$$~  :$$$$$$$$
 
   1. Download & Extract
      → Go to: github.com/bitm4ncer/Hydra_plus/releases
-     → Download: Hydra+ 0.1.0 (ZIP)
-     → Double-click ZIP to extract (or use terminal: unzip Hydra_plus-0.1.0.zip)
+     → Download: Hydra+ 0.1.2 (ZIP)
+     → Double-click ZIP to extract (or use terminal: unzip Hydra_plus-0.1.2.zip)
 
   2. Run Installer
      → Open Terminal

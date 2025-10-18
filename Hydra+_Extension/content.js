@@ -184,11 +184,11 @@ async function sendToNicotine(trackInfo) {
     metadataOverride = result.metadataOverride !== false; // Default to true
   } catch (error) {
     // Extension context invalidated (happens when extension reloads)
+    // IMPROVED: Graceful degradation instead of page reload
     if (error.message.includes('Extension context invalidated')) {
-      console.log('[Hydra+] ⚠️ Extension context invalidated - reloading page...');
-      // Auto-reload the page to reinitialize with the new extension context
-      window.location.reload();
-      return { success: false, error: 'Extension reloaded - page will refresh' };
+      console.warn('[Hydra+] Extension context invalidated - using default settings');
+      // Continue with default values instead of forcing page reload
+      return { success: false, error: 'Extension reloaded - using defaults' };
     }
     // Other errors, continue with default value
     console.warn('[Hydra+] Could not access storage:', error);
@@ -493,21 +493,13 @@ async function sendAlbumToNicotine(albumInfo, tracks) {
   let metadataOverride = true;
   try {
     const result = await chrome.storage.sync.get(['autoDownload', 'metadataOverride']);
-    console.log('[Album] DEBUG: Storage result:', result);
-    console.log('[Album] DEBUG: result.autoDownload =', result.autoDownload, '(type:', typeof result.autoDownload, ')');
-    console.log('[Album] DEBUG: result.metadataOverride =', result.metadataOverride, '(type:', typeof result.metadataOverride, ')');
-
     autoDownload = result.autoDownload || false;
     metadataOverride = result.metadataOverride !== false;
-
-    console.log('[Album] DEBUG: After assignment: autoDownload =', autoDownload);
-    console.log('[Album] DEBUG: After assignment: metadataOverride =', metadataOverride);
   } catch (error) {
+    // IMPROVED: Graceful degradation instead of page reload
     if (error.message.includes('Extension context invalidated')) {
-      console.log('[Hydra+] ⚠️ Extension context invalidated - reloading page...');
-      // Auto-reload the page to reinitialize with the new extension context
-      window.location.reload();
-      return { success: false, error: 'Extension reloaded - page will refresh' };
+      console.warn('[Hydra+] Extension context invalidated - using default settings');
+      return { success: false, error: 'Extension reloaded - using defaults' };
     }
     console.warn('[Hydra+] Could not access storage:', error);
   }
@@ -743,9 +735,10 @@ function init() {
 }
 
 // Reset album processed flag when navigating (Spotify is a SPA)
+// IMPROVED: Cleanup observer and optimize navigation detection
 let lastUrl = location.href;
 let lastAlbumId = null;
-new MutationObserver(() => {
+const navigationObserver = new MutationObserver(() => {
   const url = location.href;
   const currentAlbumId = getAlbumId();
 
@@ -760,7 +753,16 @@ new MutationObserver(() => {
       setTimeout(() => processAlbumPage(), 500); // Small delay for content to load
     }
   }
-}).observe(document, { subtree: true, childList: true });
+});
+
+navigationObserver.observe(document, { subtree: true, childList: true });
+
+// Cleanup on page unload to prevent memory leaks
+window.addEventListener('beforeunload', () => {
+  if (navigationObserver) {
+    navigationObserver.disconnect();
+  }
+});
 
 // Wait for the page to be ready
 if (document.readyState === 'loading') {

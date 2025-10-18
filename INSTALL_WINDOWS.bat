@@ -1,6 +1,6 @@
 @echo off
 setlocal enabledelayedexpansion
-title Hydra+ Installer v0.1.0
+title Hydra+ Installer v0.1.2
 color 0A
 
 cls
@@ -8,7 +8,7 @@ echo.
 echo  ========================================================================
 echo.
 echo                   H Y D R A +   I N S T A L L E R
-echo                     Nicotine+ Browser Link v0.1.0
+echo                     Nicotine+ Browser Link v0.1.2
 echo.
 echo  ========================================================================
 echo.
@@ -82,7 +82,7 @@ echo  Progress: [########................] 40%%
 echo.
 
 set "NICOTINE_PLUGINS=%APPDATA%\nicotine\plugins"
-set "PLUGIN_NAME=Hydra+_0.1.0_Plugin"
+set "PLUGIN_NAME=Hydra+_Plugin"
 set "PLUGIN_DEST=%NICOTINE_PLUGINS%\%PLUGIN_NAME%"
 set "EXTENSION_DEST=%LOCALAPPDATA%\Hydra+\Extension"
 set "SCRIPT_DIR=%~dp0"
@@ -131,7 +131,7 @@ if exist "%PLUGIN_DEST%" (
 echo  Copying plugin files...
 echo.
 
-if not exist "%SCRIPT_DIR%Hydra+_0.1.0_Extension\popup.js" (
+if not exist "%SCRIPT_DIR%Hydra+_Extension\popup.js" (
     color 0C
     echo  +-------------------------------------------------------------------+
     echo  ^|  ERROR: Source files not found!                                  ^|
@@ -143,13 +143,13 @@ if not exist "%SCRIPT_DIR%Hydra+_0.1.0_Extension\popup.js" (
     exit /b 1
 )
 
-if not exist "%SCRIPT_DIR%Hydra+_0.1.0_Plugin\__init__.py" (
+if not exist "%SCRIPT_DIR%Hydra+_Plugin\__init__.py" (
     color 0C
     echo  +-------------------------------------------------------------------+
     echo  ^|  ERROR: Plugin files not found!                                  ^|
     echo  +-------------------------------------------------------------------+
     echo.
-    echo  Expected: %SCRIPT_DIR%Hydra+_0.1.0_Plugin\
+    echo  Expected: %SCRIPT_DIR%Hydra+_Plugin\
     echo.
     pause
     exit /b 1
@@ -157,7 +157,7 @@ if not exist "%SCRIPT_DIR%Hydra+_0.1.0_Plugin\__init__.py" (
 
 mkdir "%PLUGIN_DEST%" 2>nul
 mkdir "%PLUGIN_DEST%\Server" 2>nul
-xcopy /E /I /Y "%SCRIPT_DIR%Hydra+_0.1.0_Plugin" "%PLUGIN_DEST%" >nul 2>&1
+xcopy /E /I /Y "%SCRIPT_DIR%Hydra+_Plugin" "%PLUGIN_DEST%" >nul 2>&1
 
 if %errorlevel% equ 0 (
     echo  +-------------------------------------------------------------------+
@@ -244,7 +244,7 @@ echo  Copying extension files...
 echo.
 
 mkdir "%EXTENSION_DEST%" 2>nul
-xcopy /E /I /Y "%SCRIPT_DIR%Hydra+_0.1.0_Extension" "%EXTENSION_DEST%" >nul 2>&1
+xcopy /E /I /Y "%SCRIPT_DIR%Hydra+_Extension" "%EXTENSION_DEST%" >nul 2>&1
 
 if %errorlevel% equ 0 (
     echo  +-------------------------------------------------------------------+

@@ -1,0 +1,1 @@
+The Plugin in the Git Folder is only the Backup. Make changes in the live Folder AppData/Roaming/nicotine/plugins
