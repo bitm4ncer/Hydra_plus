@@ -2,6 +2,32 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+---
+
+## ⚠️ CRITICAL: LIVE PLUGIN LOCATION ⚠️
+
+**ALL CHANGES TO THE PLUGIN MUST BE MADE IN THE LIVE INSTANCE:**
+
+```
+C:\Users\USER\AppData\Roaming\nicotine\plugins\Hydra+_0.1.0_Plugin\
+```
+
+**DO NOT** edit files in the repository folder `c:\GitHub\Hydra_plus\` when making plugin changes!
+
+**The live plugin location contains:**
+- `__init__.py` - Main plugin logic (EDIT THIS FILE DIRECTLY)
+- `Server\bridge-server.js` - Bridge server + metadata processor (EDIT THIS FILE DIRECTLY)
+- `Server\package.json` - Node dependencies
+- `Server\nicotine-queue.json` - Queue file (auto-generated)
+
+**When making changes:**
+1. Edit files directly in `C:\Users\USER\AppData\Roaming\nicotine\plugins\Hydra+_0.1.0_Plugin\`
+2. Restart Nicotine+ to reload the plugin
+3. Check Nicotine+ console for error messages
+4. Test functionality immediately
+
+---
+
 ## Project Overview
 
 Nicotine+ Browser Link is a browser extension that sends tracks from Spotify Web Player to Nicotine+ (Soulseek client) for automatic searching and downloading with professional metadata management. The system consists of three components:
@@ -51,23 +77,23 @@ Clean MP3 Ready!
 - [styles.css](styles.css) - Button styling for Spotify integration
 - [manifest.json](manifest.json) - Chrome extension manifest (v3)
 
-**Nicotine+ Plugin (AppData):**
-- `C:\Users\[user]\AppData\Roaming\nicotine\plugins\nicotine_browser_link\__init__.py` - Main plugin logic
-- `C:\Users\[user]\AppData\Roaming\nicotine\plugins\nicotine_browser_link\Server\bridge-server.js` - Bridge server + metadata processor
-- `C:\Users\[user]\AppData\Roaming\nicotine\plugins\nicotine_browser_link\Server\package.json` - Node dependencies (node-id3)
-- `C:\Users\[user]\AppData\Roaming\nicotine\plugins\nicotine_browser_link\Server\nicotine-queue.json` - Queue file
+**⚠️ Nicotine+ Plugin (LIVE LOCATION - EDIT THESE FILES DIRECTLY):**
+- `C:\Users\USER\AppData\Roaming\nicotine\plugins\Hydra+_0.1.0_Plugin\__init__.py` - Main plugin logic
+- `C:\Users\USER\AppData\Roaming\nicotine\plugins\Hydra+_0.1.0_Plugin\Server\bridge-server.js` - Bridge server + metadata processor
+- `C:\Users\USER\AppData\Roaming\nicotine\plugins\Hydra+_0.1.0_Plugin\Server\package.json` - Node dependencies (node-id3)
+- `C:\Users\USER\AppData\Roaming\nicotine\plugins\Hydra+_0.1.0_Plugin\Server\nicotine-queue.json` - Queue file
 
 ## Development Commands
 
 **Install Dependencies:**
 ```bash
-cd "C:\Users\[user]\AppData\Roaming\nicotine\plugins\nicotine_browser_link\Server"
+cd "C:\Users\USER\AppData\Roaming\nicotine\plugins\Hydra+_0.1.0_Plugin\Server"
 npm install
 ```
 
 **Start Bridge Server:**
 ```bash
-node "C:\Users\[user]\AppData\Roaming\nicotine\plugins\nicotine_browser_link\Server\bridge-server.js"
+node "C:\Users\USER\AppData\Roaming\nicotine\plugins\Hydra+_0.1.0_Plugin\Server\bridge-server.js"
 ```
 
 **Check Bridge Status:**

@@ -48,21 +48,59 @@ function parseDuration(durationText) {
  */
 function getTrackInfo(trackRow) {
   try {
-    // Find the track name element - typically in a link with specific attributes
-    const trackNameElement = trackRow.querySelector('[data-testid="tracklist-row"] a[href*="/track/"]');
+    // Check if this is a Popular section row (artist page) or regular tracklist row
+    const isPopularRow = trackRow.hasAttribute('data-testid') && trackRow.getAttribute('data-testid') === 'top-tracks-entity-row';
+
+    // Find the track name element - try both Popular section and regular tracklist selectors
+    let trackNameElement = null;
+    if (isPopularRow) {
+      // Popular section: track link is directly in the row
+      trackNameElement = trackRow.querySelector('a[href*="/track/"]');
+    } else {
+      // Regular tracklist: track link is within tracklist-row container
+      trackNameElement = trackRow.querySelector('[data-testid="tracklist-row"] a[href*="/track/"]');
+    }
+
     if (!trackNameElement) return null;
 
     const trackName = trackNameElement.textContent.trim();
 
-    // Find artist name - usually in a span or link with artist href
-    const artistElement = trackRow.querySelector('[data-testid="tracklist-row"] a[href*="/artist/"]');
-    if (!artistElement) return null;
+    // Find artist name - try both structures
+    let artistElement = null;
+    if (isPopularRow) {
+      artistElement = trackRow.querySelector('a[href*="/artist/"]');
+    } else {
+      artistElement = trackRow.querySelector('[data-testid="tracklist-row"] a[href*="/artist/"]');
+    }
 
-    const artistName = artistElement.textContent.trim();
+    // For Popular section on artist page, if no artist link found, extract from page
+    let artistName = '';
+    if (artistElement) {
+      artistName = artistElement.textContent.trim();
+    } else if (isPopularRow) {
+      // Try to get artist from page title (h1) on artist pages
+      const h1Elements = document.querySelectorAll('h1');
+      for (const h1 of h1Elements) {
+        const text = h1.textContent.trim();
+        if (h1.closest('button') || text === 'Your Library' || text.length < 2) {
+          continue;
+        }
+        artistName = text;
+        break;
+      }
+    }
+
+    if (!artistName) return null;
 
     // Extract album name from album link
     let albumName = '';
-    const albumElement = trackRow.querySelector('[data-testid="tracklist-row"] a[href*="/album/"]');
+    let albumElement = null;
+    if (isPopularRow) {
+      albumElement = trackRow.querySelector('a[href*="/album/"]');
+    } else {
+      albumElement = trackRow.querySelector('[data-testid="tracklist-row"] a[href*="/album/"]');
+    }
+
     if (albumElement) {
       albumName = albumElement.textContent.trim();
       console.log('[Track Info] Found album:', albumName);
@@ -86,7 +124,14 @@ function getTrackInfo(trackRow) {
 
     try {
       // Try to find the duration column (usually the last column in the track row)
-      const durationCandidates = trackRow.querySelectorAll('[data-testid="tracklist-row"] div');
+      let durationCandidates;
+      if (isPopularRow) {
+        // Popular section: search all divs in the row
+        durationCandidates = trackRow.querySelectorAll('div');
+      } else {
+        // Regular tracklist: search within tracklist-row
+        durationCandidates = trackRow.querySelectorAll('[data-testid="tracklist-row"] div');
+      }
 
       // Look for a cell that contains time format (mm:ss)
       for (let i = durationCandidates.length - 1; i >= 0; i--) {
@@ -645,8 +690,13 @@ function processTrackRow(trackRow) {
  * Find and process all track rows in the page
  */
 function processAllTrackRows() {
+  // Regular tracklist rows (albums, playlists)
   const trackRows = document.querySelectorAll('[data-testid="tracklist-row"]');
   trackRows.forEach(row => processTrackRow(row));
+
+  // Popular section rows (artist pages) - these use a different structure
+  const popularRows = document.querySelectorAll('div[data-testid="top-tracks-entity-row"]');
+  popularRows.forEach(row => processTrackRow(row));
 }
 
 /**

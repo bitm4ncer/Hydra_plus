@@ -71,19 +71,24 @@ async function loadSettings() {
         showInputState();
       }
 
-      // Verify connection in background and update if changed
-      const isConnected = await testSpotifyConnection(data.spotifyClientId, data.spotifyClientSecret);
-      if (isConnected !== data.spotifyApiConnected) {
-        // Update stored state if it changed
-        chrome.storage.sync.set({ spotifyApiConnected: isConnected });
+      // Wait a moment for server status check, then verify connection in background if server is online
+      setTimeout(async () => {
+        // Only test connection if server is online (avoid failed fetch errors)
+        if (isServerOnline) {
+          const isConnected = await testSpotifyConnection(data.spotifyClientId, data.spotifyClientSecret);
+          if (isConnected !== data.spotifyApiConnected) {
+            // Update stored state if it changed
+            chrome.storage.sync.set({ spotifyApiConnected: isConnected });
 
-        // Update UI if state changed
-        if (isConnected) {
-          showConnectedState();
-        } else {
-          showInputState();
+            // Update UI if state changed
+            if (isConnected) {
+              showConnectedState();
+            } else {
+              showInputState();
+            }
+          }
         }
-      }
+      }, 100); // Small delay to let server status check complete
     } else {
       showInputState();
     }
@@ -118,6 +123,9 @@ metadataOverrideToggle.addEventListener('change', () => {
   updateCredentialsSectionVisibility();
 });
 
+// Track server status globally
+let isServerOnline = false;
+
 // Check server status
 async function checkServerStatus() {
   try {
@@ -131,6 +139,15 @@ async function checkServerStatus() {
       serverStatus.classList.remove('offline');
       serverStatus.classList.add('online');
       serverStatusText.textContent = `Server online • ${data.unprocessed || 0} pending`;
+
+      const wasOffline = !isServerOnline;
+      isServerOnline = true;
+      updateSaveButtonState();
+
+      // Send credentials to server when it comes online
+      if (wasOffline) {
+        sendCredentialsToServer();
+      }
     } else {
       throw new Error('Server returned error');
     }
@@ -138,6 +155,8 @@ async function checkServerStatus() {
     serverStatus.classList.remove('online');
     serverStatus.classList.add('offline');
     serverStatusText.textContent = 'Server offline';
+    isServerOnline = false;
+    updateSaveButtonState();
   }
 }
 
@@ -162,7 +181,25 @@ function autoSaveCredentials() {
 spotifyClientId.addEventListener('input', autoSaveCredentials);
 spotifyClientSecret.addEventListener('input', autoSaveCredentials);
 
-// Manual save button - now tests connection
+// Update save button text/state based on server status
+function updateSaveButtonState() {
+  if (!isServerOnline) {
+    saveCredentialsBtn.textContent = 'Save Credentials (Server Offline)';
+    saveCredentialsBtn.disabled = true;
+    saveCredentialsBtn.style.opacity = '0.5';
+    saveCredentialsBtn.style.cursor = 'not-allowed';
+  } else {
+    saveCredentialsBtn.textContent = 'Save & Test Connection';
+    saveCredentialsBtn.disabled = false;
+    saveCredentialsBtn.style.opacity = '1';
+    saveCredentialsBtn.style.cursor = 'pointer';
+  }
+}
+
+// Set initial button state (assume offline until checked)
+updateSaveButtonState();
+
+// Manual save button - tests connection (only enabled when server is online)
 saveCredentialsBtn.addEventListener('click', async () => {
   const clientId = spotifyClientId.value.trim();
   const clientSecret = spotifyClientSecret.value.trim();
@@ -180,14 +217,13 @@ saveCredentialsBtn.addEventListener('click', async () => {
     return;
   }
 
-  // Test connection
+  // Server is online - test connection
   saveCredentialsBtn.textContent = 'Testing connection...';
   saveCredentialsBtn.disabled = true;
 
   const isConnected = await testSpotifyConnection(clientId, clientSecret);
 
-  saveCredentialsBtn.textContent = 'Save & Test Connection';
-  saveCredentialsBtn.disabled = false;
+  updateSaveButtonState(); // Restore button state
 
   if (isConnected) {
     // Save to storage
@@ -228,21 +264,23 @@ editCredentialsLink.addEventListener('click', (e) => {
   showInputState();
 });
 
-// Send credentials to server on popup open if they exist
-chrome.storage.sync.get(['spotifyClientId', 'spotifyClientSecret'], (data) => {
-  if (data.spotifyClientId && data.spotifyClientSecret) {
-    fetch(`${BRIDGE_URL}/set-spotify-credentials`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        clientId: data.spotifyClientId,
-        clientSecret: data.spotifyClientSecret
-      })
-    }).catch(err => console.error('Failed to send credentials to server:', err));
-  }
-});
+// Send credentials to server on popup open if they exist (only when server is online)
+function sendCredentialsToServer() {
+  chrome.storage.sync.get(['spotifyClientId', 'spotifyClientSecret'], (data) => {
+    if (data.spotifyClientId && data.spotifyClientSecret && isServerOnline) {
+      fetch(`${BRIDGE_URL}/set-spotify-credentials`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          clientId: data.spotifyClientId,
+          clientSecret: data.spotifyClientSecret
+        })
+      }).catch(err => console.error('Failed to send credentials to server:', err));
+    }
+  });
+}
 
-// Check server status on popup open
+// Check server status on popup open and update button state
 checkServerStatus();
 
 // Refresh status every 3 seconds

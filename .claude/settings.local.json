@@ -1,0 +1,20 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(powershell -Command \"Get-Process -Name node -ErrorAction SilentlyContinue | Select-Object Id, ProcessName, StartTime\")",
+      "Bash(powershell -Command \"Get-Process -Name node -ErrorAction SilentlyContinue | Stop-Process -Force\")",
+      "Bash(xcopy /E /I /Y \"C:\\Users\\USER\\AppData\\Roaming\\nicotine\\plugins\\Hydra+_0.1.0_Plugin\" \"c:\\GitHub\\Hydra_plus\\Hydra+_0.1.0_Plugin\")",
+      "Bash(robocopy \"C:\\Users\\USER\\AppData\\Roaming\\nicotine\\plugins\\Hydra+_0.1.0_Plugin\" \"c:\\GitHub\\Hydra_plus\\Hydra+_0.1.0_Plugin\" /E /NFL /NDL /NJH /NJS)",
+      "Bash(robocopy \"C:\\Users\\USER\\AppData\\Roaming\\nicotine\\plugins\\Hydra+_0.1.0_Plugin\" \"c:\\GitHub\\Hydra_plus\\Hydra+_0.1.0_Plugin\" /S)",
+      "Bash(powershell -Command \"Copy-Item -Path ''C:\\Users\\USER\\AppData\\Roaming\\nicotine\\plugins\\Hydra+_0.1.0_Plugin'' -Destination ''c:\\GitHub\\Hydra_plus\\Hydra+_0.1.0_Plugin'' -Recurse -Force\")",
+      "Bash(dir \"c:\\GitHub\\Hydra_plus\" /B)",
+      "Bash(where node)",
+      "Bash(chmod +x \"c:\\GitHub\\Hydra_plus\\install.sh\")",
+      "Bash(dir \"C:\\Users\\USER\\AppData\\Roaming\\nicotine\\plugins\" /B)",
+      "Bash(powershell -Command \"Get-ChildItem ''C:\\Users\\USER\\AppData\\Roaming\\nicotine\\plugins'' | Select-Object Name\")",
+      "Bash(chmod +x \"c:\\GitHub\\Hydra_plus\\INSTALL_MAC_LINUX.sh\")"
+    ],
+    "deny": [],
+    "ask": []
+  }
+}

@@ -48,30 +48,76 @@ $$$$$$$ `$$$$$$$ ;$$$$;  $$$$l$$$$;  $$$$;   $$$$     $$$$;   $$$$$$~  :$$$$$$$$
 
 
 ┌──────────────────────────────────────────────────────────────────────────────┐
-│                           >> QUICK START <<                                  │
+│                           >> INSTALLATION <<                                 │
 └──────────────────────────────────────────────────────────────────────────────┘
 
-  1. INSTALL BROWSER EXTENSION
-     • chrome://extensions/ → Enable Developer Mode
-     • Load unpacked → Select "Spotify_TrackCopy" folder
+  ╔══════════════════════════════════════════════════════════════════════════╗
+  ║  WINDOWS                                                                 ║
+  ╚══════════════════════════════════════════════════════════════════════════╝
 
-  2. INSTALL NICOTINE+ PLUGIN
-     • Copy "nicotine_browser_link" to:
-       Windows: C:\Users\[You]\AppData\Roaming\nicotine\plugins\
-       Linux:   ~/.local/share/nicotine/plugins/
-     • Nicotine+ → Settings → Plugins → Enable "Nicotine+ Hydra+"
+  1. Download & Extract
+     → Go to: github.com/bitm4ncer/Hydra_plus/releases
+     → Download: Hydra+ 0.1.0 (ZIP)
+     → Right-click ZIP → Extract All
 
-  3. INSTALL NODE.JS DEPENDENCIES
-     • Navigate to plugin Server folder:
-       cd "C:\Users\[You]\AppData\Roaming\nicotine\plugins\nicotine_browser_link\Server"
-     • Run: npm install
-     • Bridge auto-starts when plugin enabled!
+  2. Run Installer
+     → Open extracted folder
+     → Double-click INSTALL_WINDOWS.bat
+     → If Node.js missing: installer opens download page, install it, re-run
 
-  4. USE IT
-     • Go to open.spotify.com (any playlist/album)
-     • Click Send button (▶) next to any track
-     • Orange = Success, Red = Error
-     • Nicotine+ auto-searches and downloads!
+  3. Load Extension (installer shows you how)
+     → Open Chrome/Edge → chrome://extensions/
+     → Enable "Developer mode" (top-right toggle)
+     → Click "Load unpacked"
+     → Paste path from installer output → Select folder
+
+  4. Enable Plugin (installer shows you how)
+     → Open Nicotine+ → Settings → Plugins
+     → Enable "Hydra+ (Browser Link)"
+     → Click OK
+
+  Done! Buttons appear on Spotify tracks.
+
+
+  ╔══════════════════════════════════════════════════════════════════════════╗
+  ║  macOS / LINUX                                                           ║
+  ╚══════════════════════════════════════════════════════════════════════════╝
+
+  1. Download & Extract
+     → Go to: github.com/bitm4ncer/Hydra_plus/releases
+     → Download: Hydra+ 0.1.0 (ZIP)
+     → Double-click ZIP to extract (or use terminal: unzip Hydra_plus-0.1.0.zip)
+
+  2. Run Installer
+     → Open Terminal
+     → Drag INSTALL_MAC_LINUX.sh into Terminal (auto-fills path)
+     → Press Enter
+     → If Node.js missing: follow installer instructions, re-run
+
+     Alternative: cd to folder, run: chmod +x INSTALL_MAC_LINUX.sh && ./INSTALL_MAC_LINUX.sh
+
+  3. Load Extension (installer shows you how)
+     → Open Chrome/Brave → chrome://extensions/
+     → Enable "Developer mode" (top-right toggle)
+     → Click "Load unpacked"
+     → Copy path from installer output → Select folder
+
+  4. Enable Plugin (installer shows you how)
+     → Open Nicotine+ → Settings → Plugins
+     → Enable "Hydra+ (Browser Link)"
+     → Click OK
+
+  Done! Buttons appear on Spotify tracks.
+
+
+  ╔══════════════════════════════════════════════════════════════════════════╗
+  ║  USAGE                                                                   ║
+  ╚══════════════════════════════════════════════════════════════════════════╝
+
+  → Go to open.spotify.com
+  → Click ▶ button next to any track (orange = success, red = error)
+  → Track auto-downloads in Nicotine+
+  → Click extension icon for settings (auto-download, metadata, etc.)
 
 
 ┌──────────────────────────────────────────────────────────────────────────────┐
