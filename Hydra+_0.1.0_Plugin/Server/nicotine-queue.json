@@ -1,0 +1,100 @@
+{
+  "searches": [
+    {
+      "query": "Alex Kassian Trippy Gas",
+      "artist": "Alex Kassian",
+      "track": "Trippy Gas",
+      "album": "",
+      "track_id": "6zm5Z0rHF1qUswNnCH14Ke",
+      "duration": 249,
+      "auto_download": true,
+      "metadata_override": true,
+      "timestamp": "2025-10-18T03:53:03.220Z",
+      "processed": true
+    },
+    {
+      "query": "Alex Kassian Trippy Gas",
+      "artist": "Alex Kassian",
+      "track": "Trippy Gas",
+      "album": "",
+      "track_id": "6zm5Z0rHF1qUswNnCH14Ke",
+      "duration": 249,
+      "auto_download": true,
+      "metadata_override": true,
+      "timestamp": "2025-10-18T03:54:47.141Z",
+      "processed": true
+    },
+    {
+      "query": "Puretone Addicted to Bass",
+      "artist": "Puretone",
+      "track": "Addicted to Bass",
+      "album": "Stuck In A Groove",
+      "track_id": "6HV4jwHrovGzss1rijtwRF",
+      "duration": 235,
+      "auto_download": true,
+      "metadata_override": true,
+      "timestamp": "2025-10-18T03:56:30.320Z",
+      "processed": true
+    },
+    {
+      "query": "DAWL System Check",
+      "artist": "DAWL",
+      "track": "System Check",
+      "album": "Hyper Charged EP",
+      "track_id": "2KZysTEPzKnDj0asWK8Lrl",
+      "duration": 317,
+      "auto_download": true,
+      "metadata_override": true,
+      "timestamp": "2025-10-18T03:59:02.799Z",
+      "processed": true
+    },
+    {
+      "query": "RICO 909 B3 Track 13 - Extended Version",
+      "artist": "RICO 909",
+      "track": "B3 Track 13 - Extended Version",
+      "album": "Rave tracks 1997-98",
+      "track_id": "4dTBiMt5ihRoGwNjHj7VhR",
+      "duration": 232,
+      "auto_download": true,
+      "metadata_override": true,
+      "timestamp": "2025-10-18T04:00:34.163Z",
+      "processed": true
+    },
+    {
+      "query": "Joy Orbison Off Season",
+      "artist": "Joy Orbison",
+      "track": "Off Season",
+      "album": "Off Season / Fuerza",
+      "track_id": "3rYTTNvIXAJ4VHbcItePrv",
+      "duration": 312,
+      "auto_download": true,
+      "metadata_override": true,
+      "timestamp": "2025-10-18T04:00:55.106Z",
+      "processed": true
+    },
+    {
+      "query": "Akkord Folded Edge",
+      "artist": "Akkord",
+      "track": "Folded Edge",
+      "album": "Akkord",
+      "track_id": "2xpdRXwA6Mq7WVJFWriJiQ",
+      "duration": 317,
+      "auto_download": true,
+      "metadata_override": true,
+      "timestamp": "2025-10-18T04:01:14.324Z",
+      "processed": true
+    },
+    {
+      "query": "Pearson Sound Hornet",
+      "artist": "Pearson Sound",
+      "track": "Hornet",
+      "album": "Which Way Is Up",
+      "track_id": "2KQzEeEidOceAEQpyQnoRM",
+      "duration": 326,
+      "auto_download": true,
+      "metadata_override": true,
+      "timestamp": "2025-10-18T04:01:33.255Z",
+      "processed": true
+    }
+  ]
+}

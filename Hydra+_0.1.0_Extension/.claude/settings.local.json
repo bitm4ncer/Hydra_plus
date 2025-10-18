@@ -1,0 +1,19 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(dir:*)",
+      "Bash(curl:*)",
+      "Read(//c/Users/konta/AppData/Roaming/nicotine/plugins/spotify_search/**)",
+      "Bash(python:*)",
+      "Read(//c/Users/konta/AppData/Roaming/nicotine/plugins/**)",
+      "Bash(node:*)",
+      "Bash(netstat:*)",
+      "Bash(findstr:*)",
+      "Read(//p/Recent Projects/#Web/Nicotine+ Browser Link/Extension/nicotine_browser_link_04_Buggy/**)",
+      "Bash(taskkill //F //PID 22616)",
+      "Bash(taskkill //F //PID 21760)"
+    ],
+    "deny": [],
+    "ask": []
+  }
+}

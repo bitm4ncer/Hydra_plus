@@ -1,0 +1,106 @@
+/* Shared button styling for track buttons */
+.spotify-track-copy-btn,
+.spotify-track-nicotine-btn {
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  padding: 8px;
+  margin: 0 4px;
+  border-radius: 50%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: #b3b3b3;
+  transition: color 0.2s ease, background-color 0.2s ease;
+  position: relative;
+  width: 32px;
+  height: 32px;
+  flex-shrink: 0;
+  z-index: 10;
+  pointer-events: auto;
+}
+
+/* Album download button styling */
+.spotify-album-nicotine-btn {
+  background: transparent;
+  border: 1px solid #B9FF37;
+  cursor: pointer;
+  padding: 8px 16px;
+  margin: 0 8px;
+  border-radius: 20px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  color: #B9FF37;
+  font-size: 14px;
+  font-weight: 600;
+  transition: all 0.2s ease;
+  z-index: 10;
+  pointer-events: auto;
+}
+
+.spotify-album-nicotine-btn:hover {
+  color: #c7ff5a;
+  border-color: #c7ff5a;
+  background-color: rgba(185, 255, 55, 0.1);
+  transform: scale(1.05);
+}
+
+.spotify-album-nicotine-btn:active {
+  background-color: rgba(185, 255, 55, 0.2);
+  transform: scale(0.98);
+}
+
+.spotify-track-copy-btn:hover,
+.spotify-track-nicotine-btn:hover {
+  color: #ffffff;
+  background-color: rgba(255, 255, 255, 0.1);
+}
+
+.spotify-track-copy-btn:active,
+.spotify-track-nicotine-btn:active {
+  background-color: rgba(255, 255, 255, 0.2);
+}
+
+/* Visual feedback when text is copied */
+.spotify-track-copy-btn.copied {
+  color: #B9FF37;
+}
+
+/* Visual feedback when sent to Nicotine+ */
+.spotify-track-nicotine-btn.sent {
+  color: #B9FF37;
+}
+
+/* Visual feedback for error */
+.spotify-track-nicotine-btn.error {
+  color: #e22134; /* Red for error */
+}
+
+/* Visual feedback for album button */
+.spotify-album-nicotine-btn.sent {
+  color: #B9FF37;
+  border-color: #B9FF37;
+  background-color: rgba(185, 255, 55, 0.1);
+}
+
+.spotify-album-nicotine-btn.error {
+  color: #e22134;
+  border-color: #e22134;
+  background-color: rgba(226, 33, 52, 0.1);
+}
+
+/* Ensure SVG fills properly */
+.spotify-track-copy-btn svg,
+.spotify-track-nicotine-btn svg {
+  width: 16px;
+  height: 16px;
+  pointer-events: none;
+}
+
+.spotify-album-nicotine-btn svg {
+  width: 20px;
+  height: 20px;
+  pointer-events: none;
+}

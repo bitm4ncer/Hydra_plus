@@ -1,0 +1,43 @@
+{
+  "manifest_version": 3,
+  "name": "Nicotine+ Hydra+",
+  "version": "0.1.0",
+  "description": "Multi-headed Spotify → Soulseek bridge with auto-download and metadata management",
+  "icons": {
+    "16": "icon/icon-16.png",
+    "48": "icon/icon-48.png",
+    "128": "icon/icon-128.png"
+  },
+  "permissions": [
+    "clipboardWrite",
+    "storage",
+    "contextMenus",
+    "notifications"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "action": {
+    "default_popup": "popup.html",
+    "default_icon": {
+      "16": "icon/icon-16.png",
+      "48": "icon/icon-48.png",
+      "128": "icon/icon-128.png"
+    },
+    "default_title": "HydraSoul"
+  },
+  "host_permissions": [
+    "http://localhost:3847/*",
+    "http://127.0.0.1:3847/*"
+  ],
+  "content_scripts": [
+    {
+      "matches": [
+        "https://open.spotify.com/*"
+      ],
+      "js": ["content.js"],
+      "css": ["styles.css"],
+      "run_at": "document_idle"
+    }
+  ]
+}
