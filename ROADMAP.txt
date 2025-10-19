@@ -3,6 +3,18 @@
 ║                        Planned Feature Implementations                        ║
 ╚═══════════════════════════════════════════════════════════════════════════════╝
 
+File renaming settings. Great UX solution to set the prefered file renaming template:
+Modular buildable file names:
+
+eg. Arist - Track Title (year)
+00 - Album Title - Track Title
+etc 
+
+
+
+
+
+
 ═══════════════════════════════════════════════════════════════════════════════
   [1] DISCOGS INTEGRATION
 ═══════════════════════════════════════════════════════════════════════════════

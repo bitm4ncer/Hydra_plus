@@ -8,6 +8,7 @@
     body {
       width: 297px;
       padding: 45px;
+      padding-top: 0;
       font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
       margin: 0;
       background: #121212;
@@ -236,6 +237,44 @@
       cursor: not-allowed;
     }
 
+    /* Format preference labels */
+    .format-label {
+      font-size: 13px;
+      color: #6a6a6a;
+      transition: color 0.3s;
+    }
+
+    .format-label.active {
+      color: #B9FF37;
+      font-weight: 600;
+    }
+
+    /* Small toggle for format preference */
+    .toggle-small {
+      width: 32px;
+      height: 18px;
+    }
+
+    .toggle-small .slider {
+      background-color: #535353;
+    }
+
+    .toggle-small .slider:before {
+      height: 14px;
+      width: 14px;
+      left: 2px;
+      bottom: 2px;
+      background-color: #121212;
+    }
+
+    .toggle-small input:checked + .slider {
+      background-color: #535353;
+    }
+
+    .toggle-small input:checked + .slider:before {
+      background-color: #121212;
+      transform: translateX(14px);
+    }
 
     .ascii-art {
      font-family: 'Courier New', monospace;
@@ -299,6 +338,21 @@ $$$$$$$ ` $$$$$$ ;$$$$;  $$$$l$$$$;  $$$$;   $$$$     $$$$;   $$$$$$~  :$$$$$$$$
       <input type="checkbox" id="autoDownloadToggle">
       <span class="slider"></span>
     </label>
+  </div>
+
+  <!-- Format Preference Setting (shown when auto-download is enabled) -->
+  <div class="setting" id="formatPreferenceSection" style="display: none;">
+    <div>
+      <div class="setting-label">Format</div>
+    </div>
+    <div style="display: flex; align-items: center; gap: 12px;">
+      <span id="formatLabelMp3" class="format-label">MP3</span>
+      <label class="toggle toggle-small">
+        <input type="checkbox" id="formatPreferenceToggle">
+        <span class="slider slider-format"></span>
+      </label>
+      <span id="formatLabelFlac" class="format-label">FLAC</span>
+    </div>
   </div>
 
   <!-- Metadata Override Setting -->

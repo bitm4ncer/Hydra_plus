@@ -178,14 +178,22 @@ async function sendToNicotine(trackInfo) {
   // Get settings from Chrome storage with safe defaults
   let autoDownload = true; // Default to true (matches popup.js default)
   let metadataOverride = true; // Default to true
+  let formatPreference = 'mp3'; // Default to mp3
 
   // Safely attempt to read from Chrome storage
   try {
     // Check if Chrome extension API is available
     if (typeof chrome !== 'undefined' && chrome?.storage?.sync) {
-      const result = await chrome.storage.sync.get(['autoDownload', 'metadataOverride']);
+      const result = await chrome.storage.sync.get(['autoDownload', 'metadataOverride', 'formatPreference']);
       autoDownload = result.autoDownload !== false; // Default to true
       metadataOverride = result.metadataOverride !== false; // Default to true
+      formatPreference = result.formatPreference || 'mp3'; // Default to mp3
+      console.log('[Hydra+] sendToNicotine - Loaded settings from storage:', {
+        autoDownload,
+        metadataOverride,
+        formatPreference,
+        rawFormatPref: result.formatPreference
+      });
     } else {
       // Chrome API not available, use defaults
       console.warn('[Hydra+] Chrome storage API not available - using default settings');
@@ -203,6 +211,7 @@ async function sendToNicotine(trackInfo) {
   console.log('[Nicotine+] Track ID:', trackInfo.trackId);
   console.log('[Nicotine+] Duration:', trackInfo.duration, 'seconds');
   console.log('[Nicotine+] Auto-download:', autoDownload);
+  console.log('[Nicotine+] Format preference:', formatPreference);
   console.log('[Nicotine+] Bridge URL:', BRIDGE_URL);
 
   try {
@@ -219,7 +228,8 @@ async function sendToNicotine(trackInfo) {
         track_id: trackInfo.trackId,
         duration: trackInfo.duration,
         auto_download: autoDownload,
-        metadata_override: metadataOverride
+        metadata_override: metadataOverride,
+        format_preference: formatPreference
       })
     });
 
@@ -493,14 +503,16 @@ async function sendAlbumToNicotine(albumInfo, tracks) {
   // Get settings from Chrome storage with safe defaults
   let autoDownload = true; // Default to true (matches popup.js default)
   let metadataOverride = true; // Default to true
+  let formatPreference = 'mp3'; // Default to mp3
 
   // Safely attempt to read from Chrome storage
   try {
     // Check if Chrome extension API is available
     if (typeof chrome !== 'undefined' && chrome?.storage?.sync) {
-      const result = await chrome.storage.sync.get(['autoDownload', 'metadataOverride']);
+      const result = await chrome.storage.sync.get(['autoDownload', 'metadataOverride', 'formatPreference']);
       autoDownload = result.autoDownload !== false; // Default to true
       metadataOverride = result.metadataOverride !== false; // Default to true
+      formatPreference = result.formatPreference || 'mp3'; // Default to mp3
     } else {
       // Chrome API not available, use defaults
       console.warn('[Hydra+] Chrome storage API not available - using default settings');
@@ -514,6 +526,7 @@ async function sendAlbumToNicotine(albumInfo, tracks) {
   console.log('[Album] Attempting to send:', albumInfo.albumArtist, '-', albumInfo.albumName);
   console.log('[Album] Tracks:', tracks.length);
   console.log('[Album] Auto-download:', autoDownload);
+  console.log('[Album] Format preference:', formatPreference);
 
   try {
     const response = await fetch(BRIDGE_ALBUM_URL, {
@@ -528,7 +541,8 @@ async function sendAlbumToNicotine(albumInfo, tracks) {
         year: albumInfo.year,
         tracks: tracks,
         auto_download: autoDownload,
-        metadata_override: metadataOverride
+        metadata_override: metadataOverride,
+        format_preference: formatPreference
       })
     });
 

@@ -5,10 +5,10 @@ Multi-headed Spotify → Soulseek bridge with intelligent auto-download.
 Connects to the bridge server to receive track searches from the browser
 extension and automatically triggers searches in Nicotine+.
 
-Version: 0.1.4
+Version: 0.1.5
 """
 
-__version__ = "0.1.4"
+__version__ = "0.1.5"
 
 from pynicotine.pluginsystem import BasePlugin
 from pynicotine.events import events
@@ -351,7 +351,7 @@ class Plugin(BasePlugin):
         except Exception as e:
             self.log(f"[Hydra+] Error in cleanup: {e}")
 
-    def _trigger_search(self, query, artist='', track='', album='', track_id='', duration=0, auto_download=False, metadata_override=True, search_type='track'):
+    def _trigger_search(self, query, artist='', track='', album='', track_id='', duration=0, auto_download=False, metadata_override=True, search_type='track', format_preference='mp3'):
         """
         Trigger a search in Nicotine+.
 
@@ -365,9 +365,11 @@ class Plugin(BasePlugin):
             auto_download: Whether to auto-download the best match
             metadata_override: Whether to override metadata after download
             search_type: 'track' or 'album' - determines search behavior
+            format_preference: Preferred audio format ('mp3' or 'flac')
         """
         auto_dl_status = "Auto Download enabled" if auto_download else "Auto Download disabled"
-        self.log(f"[Hydra+] >> NEW SEARCH << {query} ({auto_dl_status})")
+        format_status = f"Format: {format_preference.upper()}"
+        self.log(f"[Hydra+] >> NEW SEARCH << {query} ({auto_dl_status}, {format_status})")
         try:
             # Use the core.search.do_search method
             # Mode "global" = network-wide search
@@ -393,6 +395,7 @@ class Plugin(BasePlugin):
                     'duration': duration,
                     'auto_download': auto_download,
                     'metadata_override': metadata_override,
+                    'format_preference': format_preference,  # 'mp3' or 'flac'
                     # Spotify metadata for post-processing
                     'artist': artist,
                     'track': track,
@@ -416,6 +419,14 @@ class Plugin(BasePlugin):
             self.log(f"[Hydra+] Traceback: {traceback.format_exc()}")
             return False
 
+    def _get_file_format(self, filename):
+        """Extract format from file extension."""
+        filename_lower = filename.lower()
+        if '.' in filename_lower:
+            ext = filename_lower.split('.')[-1]
+            return ext  # 'mp3', 'flac', 'alac', 'wav', 'm4a', etc.
+        return ''
+
     def _extract_bitrate(self, filename):
         """Extract bitrate from filename (e.g., '320kbps', '256', 'V0')."""
         import re
@@ -434,7 +445,7 @@ class Plugin(BasePlugin):
 
         return 0
 
-    def _calculate_file_score(self, file_name, file_size, file_attrs, target_duration, query):
+    def _calculate_file_score(self, file_name, file_size, file_attrs, target_duration, query, format_preference='mp3'):
         """
         Calculate a score for a file based on multiple criteria.
         Higher score = better match.
@@ -445,6 +456,7 @@ class Plugin(BasePlugin):
             file_attrs: Dictionary of file attributes (bitrate, duration, etc.)
             target_duration: Target track duration in seconds
             query: Original search query
+            format_preference: Preferred audio format ('mp3' or 'flac')
 
         Returns:
             Score (higher = better match)
@@ -517,12 +529,28 @@ class Plugin(BasePlugin):
             if matches > 0:
                 score += (matches / len(query_words)) * 50
 
-        # CRITICAL: Strongly prefer .mp3 files (150 points) - File type is most important
-        if filename_lower.endswith('.mp3'):
-            score += 150
-        else:
-            # Heavy penalty for non-MP3 files
-            score -= 100
+        # CRITICAL: Format preference scoring with smart fallback
+        file_format = self._get_file_format(file_name)
+
+        if format_preference == 'mp3':
+            # User prefers MP3 (lossy)
+            if file_format == 'mp3':
+                score += 200  # Tier 1: Preferred format
+            elif file_format in ['flac', 'alac', 'wav']:
+                score += 100  # Tier 2: Lossless fallback (better than nothing)
+            else:
+                score -= 50   # Tier 3: Other formats (not preferred)
+
+        elif format_preference == 'flac':
+            # User prefers FLAC (lossless)
+            if file_format == 'flac':
+                score += 200  # Tier 1: Preferred format
+            elif file_format in ['alac', 'wav']:
+                score += 180  # Tier 2: Other lossless formats (nearly as good)
+            elif file_format == 'mp3':
+                score += 100  # Tier 3: MP3 fallback (lossy but acceptable)
+            else:
+                score -= 50   # Tier 4: Other formats (not preferred)
 
         # Smart penalty for remixes and alternate versions
         # ONLY apply penalty if the user is NOT searching for these variants
@@ -628,7 +656,8 @@ class Plugin(BasePlugin):
                 file_size,
                 file_attrs,
                 search_info['duration'],
-                search_info['query']
+                search_info['query'],
+                search_info.get('format_preference', 'mp3')
             )
 
             # Add to candidates list and keep top 5
@@ -654,7 +683,17 @@ class Plugin(BasePlugin):
                     bitrate = file_attrs.get(0, file_attrs.get('bitrate', 0))
                     if bitrate:
                         bitrate_info = f" [{bitrate}kbps]"
-                self.log(f"[Hydra+: DL] ★ BEST MATCH → {file_name}{bitrate_info} (score: {int(score)})")
+
+                # Add format information
+                file_format = self._get_file_format(file_name).upper()
+                format_pref = search_info.get('format_preference', 'mp3').upper()
+                format_info = f" {file_format}"
+
+                # Add indicator if using fallback format
+                if file_format.lower() != search_info.get('format_preference', 'mp3').lower():
+                    format_info += " (fallback)"
+
+                self.log(f"[Hydra+: DL] ★ BEST MATCH → {file_name}{bitrate_info}{format_info} (score: {int(score)})")
 
         # Increment result count
         search_info['result_count'] += len(file_list)
@@ -1307,8 +1346,10 @@ class Plugin(BasePlugin):
                 self.log(f"[Hydra+: META] File not found: {file_path}")
                 return
 
-            if not file_path.lower().endswith('.mp3'):
-                self.log(f"[Hydra+: META] Not an MP3 file, skipping: {file_path}")
+            # Check if file is MP3 or FLAC
+            file_lower = file_path.lower()
+            if not (file_lower.endswith('.mp3') or file_lower.endswith('.flac')):
+                self.log(f"[Hydra+: META] Unsupported format (only MP3/FLAC), skipping: {file_path}")
                 return
 
             # Check if metadata override is enabled for this search
@@ -1641,8 +1682,10 @@ class Plugin(BasePlugin):
                 self.log(f"[Hydra+: ALBUM-META] ✗ File not found: {file_path}")
                 return (False, file_path)
 
-            if not file_path.lower().endswith('.mp3'):
-                self.log(f"[Hydra+: ALBUM-META] ✗ Not an MP3 file, skipping: {file_path}")
+            # Check if file is MP3 or FLAC
+            file_lower = file_path.lower()
+            if not (file_lower.endswith('.mp3') or file_lower.endswith('.flac')):
+                self.log(f"[Hydra+: ALBUM-META] ✗ Unsupported format (only MP3/FLAC), skipping: {file_path}")
                 return (False, file_path)
 
             # Prepare request data with track number
@@ -1706,8 +1749,10 @@ class Plugin(BasePlugin):
                 self.log(f"[Hydra+: ALBUM-META] ✗ File not found: {file_path}")
                 return
 
-            if not file_path.lower().endswith('.mp3'):
-                self.log(f"[Hydra+: ALBUM-META] ✗ Not an MP3 file, skipping: {file_path}")
+            # Check if file is MP3 or FLAC
+            file_lower = file_path.lower()
+            if not (file_lower.endswith('.mp3') or file_lower.endswith('.flac')):
+                self.log(f"[Hydra+: ALBUM-META] ✗ Unsupported format (only MP3/FLAC), skipping: {file_path}")
                 return
 
             # Prepare request data with track number
@@ -2030,8 +2075,9 @@ class Plugin(BasePlugin):
             tracks = search_data.get('tracks', [])
             auto_download = search_data.get('auto_download', False)
             metadata_override = search_data.get('metadata_override', True)
+            format_preference = search_data.get('format_preference', 'mp3')
 
-            self.log(f"[Hydra+: ALBUM] 🎵 Starting: {album_artist} - {album_name} ({len(tracks)} tracks, auto_download={auto_download})")
+            self.log(f"[Hydra+: ALBUM] 🎵 Starting: {album_artist} - {album_name} ({len(tracks)} tracks, auto_download={auto_download}, format={format_preference.upper()})")
 
             # Trigger search for album folder
             # Get tokens BEFORE the search to compare (do_search sometimes returns None)
@@ -2067,6 +2113,7 @@ class Plugin(BasePlugin):
                     'tracks': tracks,  # List of track dicts with track_number, artist, track, album, track_id, duration
                     'auto_download': auto_download,
                     'metadata_override': metadata_override,
+                    'format_preference': format_preference,
                     'timestamp': time.time(),
                     'folder_candidates': [],  # List of {user, folder_path, tracks_found, score}
                     'best_folder': None,  # {user, folder_path, tracks}
@@ -2198,11 +2245,12 @@ class Plugin(BasePlugin):
                         duration = search.get('duration', 0)
                         auto_download = search.get('auto_download', False)
                         metadata_override = search.get('metadata_override', True)
+                        format_preference = search.get('format_preference', 'mp3')
 
                         if not query:
                             continue
 
-                        success = self._trigger_search(query, artist, track, album, track_id, duration, auto_download, metadata_override, 'track')
+                        success = self._trigger_search(query, artist, track, album, track_id, duration, auto_download, metadata_override, 'track', format_preference)
 
                     if success:
                         # Mark as processed on server

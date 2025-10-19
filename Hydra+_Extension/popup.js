@@ -3,6 +3,10 @@ const BRIDGE_URL = 'http://127.0.0.1:3847';
 
 // Get DOM elements
 const autoDownloadToggle = document.getElementById('autoDownloadToggle');
+const formatPreferenceSection = document.getElementById('formatPreferenceSection');
+const formatPreferenceToggle = document.getElementById('formatPreferenceToggle');
+const formatLabelMp3 = document.getElementById('formatLabelMp3');
+const formatLabelFlac = document.getElementById('formatLabelFlac');
 const metadataSection = document.getElementById('metadataSection');
 const metadataOverrideToggle = document.getElementById('metadataOverrideToggle');
 const credentialsSection = document.getElementById('credentialsSection');
@@ -55,15 +59,36 @@ function showInputState() {
   apiInputState.style.display = 'block';
 }
 
+// Update format preference labels based on toggle state
+function updateFormatLabels() {
+  if (formatPreferenceToggle.checked) {
+    // FLAC selected
+    formatLabelMp3.classList.remove('active');
+    formatLabelFlac.classList.add('active');
+  } else {
+    // MP3 selected
+    formatLabelMp3.classList.add('active');
+    formatLabelFlac.classList.remove('active');
+  }
+}
+
 // Load saved settings immediately
 async function loadSettings() {
-  chrome.storage.sync.get(['autoDownload', 'metadataOverride', 'spotifyClientId', 'spotifyClientSecret', 'spotifyApiConnected'], async (data) => {
+  chrome.storage.sync.get(['autoDownload', 'formatPreference', 'metadataOverride', 'spotifyClientId', 'spotifyClientSecret', 'spotifyApiConnected'], async (data) => {
     // Auto-download defaults to true
     autoDownloadToggle.checked = data.autoDownload !== false;
+
+    // Format preference: 'mp3' (default) or 'flac'
+    // Toggle unchecked = MP3, checked = FLAC
+    formatPreferenceToggle.checked = data.formatPreference === 'flac';
+    updateFormatLabels();
+
     metadataOverrideToggle.checked = data.metadataOverride !== false; // Default to true
     spotifyClientId.value = data.spotifyClientId || '';
     spotifyClientSecret.value = data.spotifyClientSecret || '';
 
+    // Show/hide format preference section based on auto-download setting
+    updateFormatPreferenceSectionVisibility();
     // Show/hide metadata section based on auto-download setting
     updateMetadataSectionVisibility();
     // Show/hide credentials section based on metadata override setting
@@ -103,6 +128,15 @@ async function loadSettings() {
   });
 }
 
+// Update format preference section visibility based on auto-download
+function updateFormatPreferenceSectionVisibility() {
+  if (autoDownloadToggle.checked) {
+    formatPreferenceSection.style.display = 'flex';
+  } else {
+    formatPreferenceSection.style.display = 'none';
+  }
+}
+
 // Update metadata section visibility based on auto-download
 function updateMetadataSectionVisibility() {
   if (autoDownloadToggle.checked) {
@@ -132,8 +166,26 @@ autoDownloadToggle.addEventListener('change', () => {
   chrome.storage.sync.set({ autoDownload }, () => {
     console.log('Auto-download setting saved:', autoDownload);
   });
-  // Update visibility of metadata section
+  // Update visibility of format preference and metadata sections
+  updateFormatPreferenceSectionVisibility();
   updateMetadataSectionVisibility();
+});
+
+formatPreferenceToggle.addEventListener('change', () => {
+  // Convert toggle state to preference: unchecked = 'mp3', checked = 'flac'
+  const formatPreference = formatPreferenceToggle.checked ? 'flac' : 'mp3';
+  console.log('[Hydra+] Format preference toggle changed:', {
+    checked: formatPreferenceToggle.checked,
+    formatPreference: formatPreference
+  });
+  chrome.storage.sync.set({ formatPreference }, () => {
+    console.log('[Hydra+] Format preference saved to storage:', formatPreference);
+    // Verify it was saved
+    chrome.storage.sync.get(['formatPreference'], (result) => {
+      console.log('[Hydra+] Verified storage contains:', result.formatPreference);
+    });
+  });
+  updateFormatLabels();
 });
 
 metadataOverrideToggle.addEventListener('change', () => {

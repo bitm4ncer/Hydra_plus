@@ -16,7 +16,7 @@ $$$$$$$ ` $$$$$$ ;$$$$;  $$$$l$$$$;  $$$$;   $$$$     $$$$;   $$$$$$~  :$$$$$$$$
 
 
 ===============================================================================
-                             --- v0.1.4 ---
+                             --- v0.1.5 ---
 
           SPOTIFY → SOULSEEK BRIDGE  |  Multi-headed auto-download beast 
 
@@ -40,9 +40,16 @@ $$$$$$$ ` $$$$$$ ;$$$$;  $$$$l$$$$;  $$$$;   $$$$     $$$$;   $$$$$$~  :$$$$$$$$
   [√] One-click send from Spotify to Nicotine+
   [√] Smart auto-download with quality scoring
   [√] Automatic fallback - tries top 5 candidates on failure
+  [√] Format preference toggle :
+      • Choose between MP3 (lossy) or FLAC (lossless)
+      • Smart fallback to alternative formats if preferred unavailable
+      • Also supports ALAC and WAV
   [√] Professional metadata management:
-      • Renames to "Artist - Track.mp3"
-      • Fixes ID3 tags (Artist, Title, Album, Year, Track#)
+      • Supports both MP3 and FLAC files
+      • Renames to "Artist - Track.mp3" or "Artist - Track.flac"
+      • MP3: Writes ID3v2 tags via node-id3
+      • FLAC: Writes Vorbis comments via flac-tagger
+      • Tags: Artist, Title, Album, Year, Track#
       • Embeds high-quality album artwork
       • Optional: Genre & Label (with Spotify API)
   [√] Extension popup with full control
@@ -59,7 +66,7 @@ $$$$$$$ ` $$$$$$ ;$$$$;  $$$$l$$$$;  $$$$;   $$$$     $$$$;   $$$$$$~  :$$$$$$$$
 
   1. Download & Extract
      → Go to: github.com/bitm4ncer/Hydra_plus/releases
-     → Download: Hydra+ 0.1.4 (ZIP)
+     → Download: Hydra+ 0.1.5 (ZIP)
      → Right-click ZIP → Extract All
 
   2. Run Installer
@@ -87,8 +94,8 @@ $$$$$$$ ` $$$$$$ ;$$$$;  $$$$l$$$$;  $$$$;   $$$$     $$$$;   $$$$$$~  :$$$$$$$$
 
   1. Download & Extract
      → Go to: github.com/bitm4ncer/Hydra_plus/releases
-     → Download: Hydra+ 0.1.4 (ZIP)
-     → Double-click ZIP to extract (or use terminal: unzip Hydra_plus-0.1.4.zip)
+     → Download: Hydra+ 0.1.5 (ZIP)
+     → Double-click ZIP to extract (or use terminal: unzip Hydra_plus-0.1.5.zip)
 
   2. Run Installer
      → Open Terminal

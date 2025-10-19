@@ -189,24 +189,40 @@ echo  ========================================================================
 echo.
 echo  Progress: [################........] 80%%
 echo.
-echo  Installing npm packages (node-id3)...
+echo  Installing npm packages (node-id3, flac-tagger)...
 echo  This may take a moment...
 echo.
 
 cd /d "%PLUGIN_DEST%\Server"
 if exist "package.json" (
-    call npm install --silent --no-progress
+    echo  Running: npm install
+    echo.
+    call npm install
     if %errorlevel% equ 0 (
         echo.
         echo  +-------------------------------------------------------------------+
         echo  ^|  SUCCESS: Dependencies installed                                 ^|
         echo  +-------------------------------------------------------------------+
+        echo.
+        echo  Verifying packages...
+        if exist "node_modules\node-id3" (
+            echo  [√] node-id3 installed
+        ) else (
+            echo  [X] node-id3 MISSING
+        )
+        if exist "node_modules\flac-tagger" (
+            echo  [√] flac-tagger installed
+        ) else (
+            echo  [X] flac-tagger MISSING
+        )
     ) else (
         color 0C
         echo.
         echo  +-------------------------------------------------------------------+
         echo  ^|  ERROR: Failed to install dependencies                           ^|
         echo  +-------------------------------------------------------------------+
+        echo.
+        echo  Please check the error above and try again.
         pause
         exit /b 1
     )

@@ -13,7 +13,26 @@ const https = require('https');
 const fs = require('fs');
 const { promises: fsPromises } = require('fs');
 const path = require('path');
-const NodeID3 = require('node-id3');
+
+// Load required npm packages with error handling
+let NodeID3, FlacTagger;
+try {
+  NodeID3 = require('node-id3');
+} catch (err) {
+  console.error('[Hydra+] ERROR: node-id3 package not found!');
+  console.error('[Hydra+] Please run: npm install');
+  console.error('[Hydra+] Error:', err.message);
+  process.exit(1);
+}
+
+try {
+  FlacTagger = require('flac-tagger');
+} catch (err) {
+  console.error('[Hydra+] ERROR: flac-tagger package not found!');
+  console.error('[Hydra+] Please run: npm install');
+  console.error('[Hydra+] Error:', err.message);
+  process.exit(1);
+}
 
 // Configuration
 const PORT = 3847;
@@ -166,7 +185,8 @@ const server = http.createServer((req, res) => {
           track_id: data.track_id || '',
           duration: data.duration || 0,
           auto_download: data.auto_download || false,
-          metadata_override: data.metadata_override !== false // Default to true
+          metadata_override: data.metadata_override !== false, // Default to true
+          format_preference: data.format_preference || 'mp3' // Default to mp3
         };
 
         const success = addToQueue(searchData);
@@ -231,7 +251,8 @@ const server = http.createServer((req, res) => {
           year: data.year || '',
           tracks: data.tracks, // Array of track objects
           auto_download: data.auto_download || false,
-          metadata_override: data.metadata_override !== false
+          metadata_override: data.metadata_override !== false,
+          format_preference: data.format_preference || 'mp3' // Default to mp3
         };
 
         console.log('[Hydra+: ALBUM] auto_download =', albumSearchData.auto_download);
@@ -934,10 +955,16 @@ async function processMetadata(data, res) {
       throw new Error('File not found');
     }
 
-    // Check if it's an MP3 file
-    if (!file_path.toLowerCase().endsWith('.mp3')) {
-      throw new Error('Not an MP3 file');
+    // Detect file format
+    const ext = path.extname(file_path).toLowerCase();
+    const isMP3 = ext === '.mp3';
+    const isFLAC = ext === '.flac';
+
+    if (!isMP3 && !isFLAC) {
+      throw new Error(`Unsupported format: ${ext} (only MP3/FLAC supported)`);
     }
+
+    console.log(`[Hydra+: META] Format detected: ${isMP3 ? 'MP3' : 'FLAC'}`);
 
     // STEP 1: RENAME FILE FIRST (before any network operations that could timeout)
     const trackNum = data.track_number || 0;
@@ -992,54 +1019,73 @@ async function processMetadata(data, res) {
           coverData = null;
         }
 
-        // Step 5: Write tags with node-id3
-        const tags = {
-          title: track || '',
-          artist: artist || '',
-          album: album || ''
-        };
-
-        // Add year if available
-        if (spotifyMeta.year) {
-          tags.year = spotifyMeta.year;
-        }
-
-        // Add track number if available (from Spotify or explicitly provided)
-        if (data.track_number) {
-          tags.trackNumber = String(data.track_number);
-        } else if (spotifyMeta.trackNumber) {
-          tags.trackNumber = spotifyMeta.trackNumber;
-        }
-
-        // Add genre if available from API
-        if (apiMeta.genre) {
-          tags.genre = apiMeta.genre;
-        }
-
-        // Add publisher/label if available from API
-        if (apiMeta.label) {
-          tags.publisher = apiMeta.label;
-        }
-
-        // Add cover art if available
-        if (coverData) {
-          tags.image = {
-            mime: 'image/jpeg',
-            type: { id: 3, name: 'front cover' },
-            description: 'Cover',
-            imageBuffer: coverData
-          };
-        }
-
-        // Write the tags (node-id3 will replace all existing tags with only what we specify)
+        // Step 5: Write tags (format-specific)
         let writeSuccess = false;
-        try {
-          console.log(`[Hydra+: META] ⚡ Writing ID3 tags...`);
-          writeSuccess = NodeID3.write(tags, newPath);
-        } catch (id3Error) {
-          console.error(`[Hydra+: META] ✗ ID3 exception: ${id3Error.message}`);
-          console.error(`[Hydra+: META] Stack: ${id3Error.stack}`);
-          return; // Already sent response, just log error
+        const trackNumber = data.track_number || spotifyMeta.trackNumber || '';
+
+        if (isMP3) {
+          // MP3: Use NodeID3
+          const tags = {
+            title: track || '',
+            artist: artist || '',
+            album: album || ''
+          };
+
+          if (spotifyMeta.year) tags.year = spotifyMeta.year;
+          if (trackNumber) tags.trackNumber = String(trackNumber);
+          if (apiMeta.genre) tags.genre = apiMeta.genre;
+          if (apiMeta.label) tags.publisher = apiMeta.label;
+
+          if (coverData) {
+            tags.image = {
+              mime: 'image/jpeg',
+              type: { id: 3, name: 'front cover' },
+              description: 'Cover',
+              imageBuffer: coverData
+            };
+          }
+
+          try {
+            console.log(`[Hydra+: META] ⚡ Writing ID3 tags (MP3)...`);
+            writeSuccess = NodeID3.write(tags, newPath);
+          } catch (id3Error) {
+            console.error(`[Hydra+: META] ✗ ID3 exception: ${id3Error.message}`);
+            console.error(`[Hydra+: META] Stack: ${id3Error.stack}`);
+            return;
+          }
+
+        } else if (isFLAC) {
+          // FLAC: Use flac-tagger
+          try {
+            console.log(`[Hydra+: META] ⚡ Writing Vorbis comments (FLAC)...`);
+            const tagger = new FlacTagger(newPath);
+
+            // Build Vorbis comment tags
+            const flacTags = {
+              TITLE: track || '',
+              ARTIST: artist || '',
+              ALBUM: album || ''
+            };
+
+            if (spotifyMeta.year) flacTags.DATE = String(spotifyMeta.year);
+            if (trackNumber) flacTags.TRACKNUMBER = String(trackNumber);
+            if (apiMeta.genre) flacTags.GENRE = apiMeta.genre;
+            if (apiMeta.label) flacTags.LABEL = apiMeta.label;
+
+            await tagger.setTag(flacTags);
+
+            // Add cover art if available
+            if (coverData) {
+              await tagger.setPicture({ buffer: coverData });
+            }
+
+            await tagger.save();
+            writeSuccess = true;
+          } catch (flacError) {
+            console.error(`[Hydra+: META] ✗ FLAC exception: ${flacError.message}`);
+            console.error(`[Hydra+: META] Stack: ${flacError.stack}`);
+            return;
+          }
         }
 
         if (writeSuccess) {
@@ -1048,7 +1094,7 @@ async function processMetadata(data, res) {
           if (track) console.log(`[Hydra+: META]   Title: ${track}`);
           if (album) console.log(`[Hydra+: META]   Album: ${album}`);
           if (spotifyMeta.year) console.log(`[Hydra+: META]   Year: ${spotifyMeta.year}`);
-          if (spotifyMeta.trackNumber) console.log(`[Hydra+: META]   Track: #${spotifyMeta.trackNumber}`);
+          if (trackNumber) console.log(`[Hydra+: META]   Track: #${trackNumber}`);
           if (apiMeta.genre) console.log(`[Hydra+: META]   Genre: ${apiMeta.genre}`);
           if (apiMeta.label) console.log(`[Hydra+: META]   Label: ${apiMeta.label}`);
           if (coverData) console.log(`[Hydra+: META]   Cover: embedded`);

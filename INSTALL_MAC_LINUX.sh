@@ -207,26 +207,43 @@ echo -e "${GREEN}  =============================================================
 echo ""
 echo "  Progress: [################........] 80%"
 echo ""
-echo "  Installing npm packages (node-id3)..."
+echo "  Installing npm packages (node-id3, flac-tagger)..."
 echo "  This may take a moment..."
 echo ""
 
 cd "$PLUGIN_DEST/Server"
 if [ -f "package.json" ]; then
-    npm install --silent --no-progress
+    echo "  Running: npm install"
+    echo ""
+    npm install
     if [ $? -eq 0 ]; then
         echo ""
         echo -e "${GREEN}  +-------------------------------------------------------------------+${NC}"
         echo -e "${GREEN}  |  SUCCESS: Dependencies installed                                 |${NC}"
         echo -e "${GREEN}  +-------------------------------------------------------------------+${NC}"
+        echo ""
+        echo "  Verifying packages..."
+        if [ -d "node_modules/node-id3" ]; then
+            echo -e "${GREEN}  [√] node-id3 installed${NC}"
+        else
+            echo -e "${RED}  [X] node-id3 MISSING${NC}"
+        fi
+        if [ -d "node_modules/flac-tagger" ]; then
+            echo -e "${GREEN}  [√] flac-tagger installed${NC}"
+        else
+            echo -e "${RED}  [X] flac-tagger MISSING${NC}"
+        fi
     else
         echo ""
         echo -e "${RED}  +-------------------------------------------------------------------+${NC}"
         echo -e "${RED}  |  ERROR: Failed to install dependencies                           |${NC}"
         echo -e "${RED}  +-------------------------------------------------------------------+${NC}"
+        echo ""
+        echo "  Please check the error above and try again."
         exit 1
     fi
 else
+    echo ""
     echo -e "${YELLOW}  +-------------------------------------------------------------------+${NC}"
     echo -e "${YELLOW}  |  WARNING: package.json not found                                 |${NC}"
     echo -e "${YELLOW}  +-------------------------------------------------------------------+${NC}"
