@@ -956,7 +956,7 @@ async function downloadCoverArt(imageUrl) {
 
 // Main metadata processing function
 async function processMetadata(data, res) {
-  const { file_path, artist, track, album, track_id } = data;
+  const { file_path, artist, track, album, track_id, prefetched_year, prefetched_image_url } = data;
 
   console.log(`[Hydra+: META] >> PROCESSING << ${path.basename(file_path)}`);
 
@@ -1012,12 +1012,24 @@ async function processMetadata(data, res) {
           console.log('[Hydra+: META] Continuing metadata fetch in background...');
 
           // Step 2: Fetch extended metadata from Spotify page (year, track#, image)
+          // IMPROVED: Use prefetched metadata if available (skip Spotify page fetch)
           let spotifyMeta = {};
-          try {
-            spotifyMeta = await fetchSpotifyMetadata(track_id);
-          } catch (spotifyError) {
-            console.error(`[Hydra+: META] ✗ Spotify metadata error: ${spotifyError.message}`);
-            spotifyMeta = {};
+
+          if (prefetched_year || prefetched_image_url) {
+            // Use prefetched metadata from Python cache
+            console.log('[Hydra+: META] ✓ Using prefetched metadata from cache');
+            spotifyMeta = {
+              year: prefetched_year || null,
+              imageUrl: prefetched_image_url || null
+            };
+          } else {
+            // Fallback: Fetch from Spotify page (for single tracks or cache miss)
+            try {
+              spotifyMeta = await fetchSpotifyMetadata(track_id);
+            } catch (spotifyError) {
+              console.error(`[Hydra+: META] ✗ Spotify metadata error: ${spotifyError.message}`);
+              spotifyMeta = {};
+            }
           }
 
           // Step 3: Fetch API metadata if credentials are available (genre, label)
