@@ -622,6 +622,10 @@ async function getSpotifyAccessToken() {
           resolve(null);
         }
       });
+      res.on('error', (err) => {
+        console.error('[Hydra+: API] ✗ Token response error:', err.message);
+        resolve(null);
+      });
     });
 
     req.on('error', (err) => {
@@ -704,6 +708,11 @@ async function fetchSpotifyAPIMetadata(trackId) {
                   resolve({});
                 }
               });
+              artistRes.on('error', (err) => {
+                clearTimeout(overallTimeout);
+                console.error('[Hydra+: API] ✗ Artist response error:', err.message);
+                resolve({});
+              });
             });
 
             artistReq.on('error', (err) => {
@@ -735,6 +744,11 @@ async function fetchSpotifyAPIMetadata(trackId) {
           console.error('[Hydra+: API] ✗ Track parse error:', e.message);
           resolve({});
         }
+      });
+      res.on('error', (err) => {
+        clearTimeout(overallTimeout);
+        console.error('[Hydra+: API] ✗ Track response error:', err.message);
+        resolve({});
       });
     });
 
@@ -867,6 +881,11 @@ async function fetchSpotifyMetadata(trackId) {
           resolve({});
         }
       });
+      res.on('error', (err) => {
+        clearTimeout(timeout);
+        console.error(`[Hydra+: META] ✗ Spotify response error: ${err.message}`);
+        resolve({});
+      });
     });
 
     req.on('error', (err) => {
@@ -910,6 +929,11 @@ async function downloadCoverArt(imageUrl) {
         const buffer = Buffer.concat(chunks);
         console.log(`[Hydra+: META] ✓ Cover: ${buffer.length} bytes`);
         resolve(buffer);
+      });
+      imgRes.on('error', (err) => {
+        clearTimeout(timeout);
+        console.error(`[Hydra+: META] ✗ Image response error: ${err.message}`);
+        resolve(null);
       });
     });
 
@@ -981,131 +1005,153 @@ async function processMetadata(data, res) {
 
     // Continue with metadata processing in background (don't block response)
     // This runs asynchronously and won't delay the next track in album batches
-    setImmediate(async () => {
-      try {
-        console.log('[Hydra+: META] Continuing metadata fetch in background...');
-
-        // Step 2: Fetch extended metadata from Spotify page (year, track#, image)
-        let spotifyMeta = {};
+    // CRITICAL: All code in this block must be wrapped in try-catch to prevent server crashes
+    setImmediate(() => {
+      (async () => {
         try {
-          spotifyMeta = await fetchSpotifyMetadata(track_id);
-        } catch (spotifyError) {
-          console.error(`[Hydra+: META] ✗ Spotify metadata error: ${spotifyError.message}`);
-          spotifyMeta = {};
-        }
+          console.log('[Hydra+: META] Continuing metadata fetch in background...');
 
-        // Step 3: Fetch API metadata if credentials are available (genre, label)
-        let apiMeta = {};
-        if (track_id) {
-          if (spotifyCredentials.clientId && spotifyCredentials.clientSecret) {
-            console.log('[Hydra+: API] Fetching metadata...');
+          // Step 2: Fetch extended metadata from Spotify page (year, track#, image)
+          let spotifyMeta = {};
+          try {
+            spotifyMeta = await fetchSpotifyMetadata(track_id);
+          } catch (spotifyError) {
+            console.error(`[Hydra+: META] ✗ Spotify metadata error: ${spotifyError.message}`);
+            spotifyMeta = {};
+          }
+
+          // Step 3: Fetch API metadata if credentials are available (genre, label)
+          let apiMeta = {};
+          if (track_id) {
+            if (spotifyCredentials.clientId && spotifyCredentials.clientSecret) {
+              console.log('[Hydra+: API] Fetching metadata...');
+              try {
+                apiMeta = await fetchSpotifyAPIMetadata(track_id);
+              } catch (apiError) {
+                console.error(`[Hydra+: API] ✗ API metadata error: ${apiError.message}`);
+                apiMeta = {};
+              }
+            } else {
+              console.log('[Hydra+: API] No credentials (skipping genre/label)');
+            }
+          }
+
+          // Step 4: Download cover art
+          let coverData = null;
+          try {
+            coverData = await downloadCoverArt(spotifyMeta.imageUrl);
+          } catch (coverError) {
+            console.error(`[Hydra+: META] ✗ Cover download error: ${coverError.message}`);
+            coverData = null;
+          }
+
+          // Step 5: Write tags (format-specific)
+          let writeSuccess = false;
+          const trackNumber = data.track_number || spotifyMeta.trackNumber || '';
+
+          if (isMP3) {
+            // MP3: Use NodeID3
             try {
-              apiMeta = await fetchSpotifyAPIMetadata(track_id);
-            } catch (apiError) {
-              console.error(`[Hydra+: API] ✗ API metadata error: ${apiError.message}`);
-              apiMeta = {};
+              const tags = {
+                title: track || '',
+                artist: artist || '',
+                album: album || ''
+              };
+
+              if (spotifyMeta.year) tags.year = spotifyMeta.year;
+              if (trackNumber) tags.trackNumber = String(trackNumber);
+              if (apiMeta.genre) tags.genre = apiMeta.genre;
+              if (apiMeta.label) tags.publisher = apiMeta.label;
+
+              if (coverData) {
+                tags.image = {
+                  mime: 'image/jpeg',
+                  type: { id: 3, name: 'front cover' },
+                  description: 'Cover',
+                  imageBuffer: coverData
+                };
+              }
+
+              console.log(`[Hydra+: META] ⚡ Writing ID3 tags (MP3)...`);
+              writeSuccess = NodeID3.write(tags, newPath);
+
+              if (!writeSuccess) {
+                console.error(`[Hydra+: META] ✗ NodeID3.write returned false`);
+              }
+            } catch (id3Error) {
+              console.error(`[Hydra+: META] ✗ ID3 exception: ${id3Error.message}`);
+              console.error(`[Hydra+: META] Stack: ${id3Error.stack}`);
+              writeSuccess = false;
             }
+
+          } else if (isFLAC) {
+            // FLAC: Use flac-tagger with comprehensive error handling
+            try {
+              console.log(`[Hydra+: META] ⚡ Writing Vorbis comments (FLAC)...`);
+
+              // Verify file exists before attempting to tag
+              if (!fs.existsSync(newPath)) {
+                throw new Error(`FLAC file not found: ${newPath}`);
+              }
+
+              const tagger = new FlacTagger(newPath);
+
+              // Build Vorbis comment tags
+              const flacTags = {
+                TITLE: track || '',
+                ARTIST: artist || '',
+                ALBUM: album || ''
+              };
+
+              if (spotifyMeta.year) flacTags.DATE = String(spotifyMeta.year);
+              if (trackNumber) flacTags.TRACKNUMBER = String(trackNumber);
+              if (apiMeta.genre) flacTags.GENRE = apiMeta.genre;
+              if (apiMeta.label) flacTags.LABEL = apiMeta.label;
+
+              await tagger.setTag(flacTags);
+
+              // Add cover art if available
+              if (coverData) {
+                try {
+                  await tagger.setPicture({ buffer: coverData });
+                } catch (pictureError) {
+                  console.error(`[Hydra+: META] ✗ FLAC picture embedding failed: ${pictureError.message}`);
+                  // Continue without picture
+                }
+              }
+
+              await tagger.save();
+              writeSuccess = true;
+            } catch (flacError) {
+              console.error(`[Hydra+: META] ✗ FLAC exception: ${flacError.message}`);
+              console.error(`[Hydra+: META] Stack: ${flacError.stack}`);
+              writeSuccess = false;
+            }
+          }
+
+          if (writeSuccess) {
+            console.log(`[Hydra+: META] ✓ SUCCESS`);
+            if (artist) console.log(`[Hydra+: META]   Artist: ${artist}`);
+            if (track) console.log(`[Hydra+: META]   Title: ${track}`);
+            if (album) console.log(`[Hydra+: META]   Album: ${album}`);
+            if (spotifyMeta.year) console.log(`[Hydra+: META]   Year: ${spotifyMeta.year}`);
+            if (trackNumber) console.log(`[Hydra+: META]   Track: #${trackNumber}`);
+            if (apiMeta.genre) console.log(`[Hydra+: META]   Genre: ${apiMeta.genre}`);
+            if (apiMeta.label) console.log(`[Hydra+: META]   Label: ${apiMeta.label}`);
+            if (coverData) console.log(`[Hydra+: META]   Cover: embedded`);
           } else {
-            console.log('[Hydra+: API] No credentials (skipping genre/label)');
+            console.error(`[Hydra+: META] ✗ Metadata write failed`);
           }
+        } catch (bgError) {
+          // Catch any errors in background processing to prevent server crash
+          console.error(`[Hydra+: META] ✗ Background processing error: ${bgError.message}`);
+          console.error(`[Hydra+: META] Stack: ${bgError.stack}`);
         }
-
-        // Step 4: Download cover art
-        let coverData = null;
-        try {
-          coverData = await downloadCoverArt(spotifyMeta.imageUrl);
-        } catch (coverError) {
-          console.error(`[Hydra+: META] ✗ Cover download error: ${coverError.message}`);
-          coverData = null;
-        }
-
-        // Step 5: Write tags (format-specific)
-        let writeSuccess = false;
-        const trackNumber = data.track_number || spotifyMeta.trackNumber || '';
-
-        if (isMP3) {
-          // MP3: Use NodeID3
-          const tags = {
-            title: track || '',
-            artist: artist || '',
-            album: album || ''
-          };
-
-          if (spotifyMeta.year) tags.year = spotifyMeta.year;
-          if (trackNumber) tags.trackNumber = String(trackNumber);
-          if (apiMeta.genre) tags.genre = apiMeta.genre;
-          if (apiMeta.label) tags.publisher = apiMeta.label;
-
-          if (coverData) {
-            tags.image = {
-              mime: 'image/jpeg',
-              type: { id: 3, name: 'front cover' },
-              description: 'Cover',
-              imageBuffer: coverData
-            };
-          }
-
-          try {
-            console.log(`[Hydra+: META] ⚡ Writing ID3 tags (MP3)...`);
-            writeSuccess = NodeID3.write(tags, newPath);
-          } catch (id3Error) {
-            console.error(`[Hydra+: META] ✗ ID3 exception: ${id3Error.message}`);
-            console.error(`[Hydra+: META] Stack: ${id3Error.stack}`);
-            return;
-          }
-
-        } else if (isFLAC) {
-          // FLAC: Use flac-tagger
-          try {
-            console.log(`[Hydra+: META] ⚡ Writing Vorbis comments (FLAC)...`);
-            const tagger = new FlacTagger(newPath);
-
-            // Build Vorbis comment tags
-            const flacTags = {
-              TITLE: track || '',
-              ARTIST: artist || '',
-              ALBUM: album || ''
-            };
-
-            if (spotifyMeta.year) flacTags.DATE = String(spotifyMeta.year);
-            if (trackNumber) flacTags.TRACKNUMBER = String(trackNumber);
-            if (apiMeta.genre) flacTags.GENRE = apiMeta.genre;
-            if (apiMeta.label) flacTags.LABEL = apiMeta.label;
-
-            await tagger.setTag(flacTags);
-
-            // Add cover art if available
-            if (coverData) {
-              await tagger.setPicture({ buffer: coverData });
-            }
-
-            await tagger.save();
-            writeSuccess = true;
-          } catch (flacError) {
-            console.error(`[Hydra+: META] ✗ FLAC exception: ${flacError.message}`);
-            console.error(`[Hydra+: META] Stack: ${flacError.stack}`);
-            return;
-          }
-        }
-
-        if (writeSuccess) {
-          console.log(`[Hydra+: META] ✓ SUCCESS`);
-          if (artist) console.log(`[Hydra+: META]   Artist: ${artist}`);
-          if (track) console.log(`[Hydra+: META]   Title: ${track}`);
-          if (album) console.log(`[Hydra+: META]   Album: ${album}`);
-          if (spotifyMeta.year) console.log(`[Hydra+: META]   Year: ${spotifyMeta.year}`);
-          if (trackNumber) console.log(`[Hydra+: META]   Track: #${trackNumber}`);
-          if (apiMeta.genre) console.log(`[Hydra+: META]   Genre: ${apiMeta.genre}`);
-          if (apiMeta.label) console.log(`[Hydra+: META]   Label: ${apiMeta.label}`);
-          if (coverData) console.log(`[Hydra+: META]   Cover: embedded`);
-        } else {
-          console.error(`[Hydra+: META] ✗ Write returned false`);
-        }
-      } catch (bgError) {
-        // Catch any errors in background processing to prevent server crash
-        console.error(`[Hydra+: META] ✗ Background processing error: ${bgError.message}`);
-        console.error(`[Hydra+: META] Stack: ${bgError.stack}`);
-      }
+      })().catch((asyncError) => {
+        // Additional safety net for async errors
+        console.error(`[Hydra+: META] ✗ Async processing error: ${asyncError.message}`);
+        console.error(`[Hydra+: META] Stack: ${asyncError.stack}`);
+      });
     });
 
     return; // Exit here since we already sent response
