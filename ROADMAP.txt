@@ -1,0 +1,514 @@
+╔═══════════════════════════════════════════════════════════════════════════════╗
+║                           HYDRA+ ROADMAP                                      ║
+║                        Planned Feature Implementations                        ║
+╚═══════════════════════════════════════════════════════════════════════════════╝
+
+═══════════════════════════════════════════════════════════════════════════════
+  [1] DISCOGS INTEGRATION
+═══════════════════════════════════════════════════════════════════════════════
+
+  ┌─ PROBLEM ────────────────────────────────────────────────────────────────┐
+  │ Currently Hydra+ only works with Spotify. Users browsing Discogs for     │
+  │ music discovery cannot seamlessly download tracks or releases they find. │
+  │ Manual copy-paste of metadata is tedious and error-prone.                │
+  └──────────────────────────────────────────────────────────────────────────┘
+
+  ┌─ SOLUTION ───────────────────────────────────────────────────────────────┐
+  │ Extend content.js to support Discogs pages by:                           │
+  │ • Adding Discogs-specific button injection for releases and tracks       │
+  │ • Parsing Discogs DOM to extract release/track metadata                  │
+  │ • Fetching additional metadata from Discogs API (optional enhancement)   │
+  │ • Auto-completing artist, album, year, label, and genre information      │
+  └──────────────────────────────────────────────────────────────────────────┘
+
+  ┌─ IMPLEMENTATION PLAN ────────────────────────────────────────────────────┐
+  │                                                                           │
+  │ STEP 1: Discogs DOM Analysis & Content Script Setup                      │
+  │ ────────────────────────────────────────────────────────────────────────│
+  │   • Update manifest.json to add Discogs URL pattern permissions:         │
+  │     "*://*.discogs.com/*"                                                 │
+  │   • Create discogs-content.js or extend existing content.js with         │
+  │     Discogs detection: check if(window.location.host.includes('discogs'))│
+  │   • Study Discogs release page HTML structure to identify:               │
+  │     - Release title selector (h1.title or similar)                       │
+  │     - Artist selector (typically within .profile or .head links)         │
+  │     - Track list container (div#release-tracklist or table)              │
+  │     - Individual track rows (tr.track or similar)                        │
+  │     - Year/label metadata (in .head or .profile sections)                │
+  │                                                                           │
+  │ STEP 2: Metadata Extraction Functions                                    │
+  │ ────────────────────────────────────────────────────────────────────────│
+  │   • Create getDiscogsReleaseInfo() function to extract:                  │
+  │     - Release ID from URL (e.g., /release/12345678)                      │
+  │     - Album/release title from h1 or meta tags                           │
+  │     - Artist name from artist links or meta tags                         │
+  │     - Year from release info section                                     │
+  │     - Label from release details                                         │
+  │     - Genre/style from meta or sidebar                                   │
+  │   • Create getDiscogsTrackInfo(trackRow) function to extract:            │
+  │     - Track position (A1, B2, 1, 2, etc.)                                │
+  │     - Track title from track name cell                                   │
+  │     - Duration from duration cell                                        │
+  │     - Artist (if different from release artist)                          │
+  │                                                                           │
+  │ STEP 3: Button Injection for Discogs                                     │
+  │ ────────────────────────────────────────────────────────────────────────│
+  │   • Create createDiscogsReleaseButton() - similar to album button logic  │
+  │     - Find release action bar (near "Add to Collection" button area)     │
+  │     - Insert Nicotine+ download button for full release                  │
+  │   • Create createDiscogsTrackButton(trackInfo) - per-track buttons       │
+  │     - Locate each track row in tracklist table/div                       │
+  │     - Insert button in track row (similar to Spotify implementation)     │
+  │   • Apply same SVG icons (NICOTINE_ICON_SVG) for consistency             │
+  │   • Add CSS classes for Discogs-specific styling if needed               │
+  │                                                                           │
+  │ STEP 4: Bridge Server Integration                                        │
+  │ ────────────────────────────────────────────────────────────────────────│
+  │   • Reuse existing /search and /search-album endpoints in bridge-server  │
+  │   • Map Discogs metadata to expected format:                             │
+  │     {                                                                     │
+  │       query: `${artist} ${track}`,                                       │
+  │       artist: extracted_artist,                                          │
+  │       track: extracted_track,                                            │
+  │       album: extracted_album,                                            │
+  │       discogs_id: release_or_track_id,  // new field                     │
+  │       year: extracted_year,                                              │
+  │       label: extracted_label,                                            │
+  │       genre: extracted_genre                                             │
+  │     }                                                                     │
+  │   • Update __init__.py plugin to recognize discogs_id field              │
+  │                                                                           │
+  │ STEP 5: Optional Discogs API Integration                                 │
+  │ ────────────────────────────────────────────────────────────────────────│
+  │   • Add Discogs API credentials configuration in popup settings          │
+  │   • Create fetchDiscogsAPIMetadata(releaseId) in bridge-server.js        │
+  │   • Use Discogs API to enrich metadata:                                  │
+  │     - GET /releases/{id} for complete release details                    │
+  │     - Extract additional data: genres, styles, formats, country          │
+  │   • Similar to Spotify API, store credentials in discogs-credentials.json│
+  │   • Handle API rate limits (Discogs allows 60 req/min authenticated)     │
+  │                                                                           │
+  │ STEP 6: Testing & Edge Cases                                             │
+  │ ────────────────────────────────────────────────────────────────────────│
+  │   • Test on various Discogs page types:                                  │
+  │     - Standard releases (albums, EPs, singles)                           │
+  │     - Compilations (various artists)                                     │
+  │     - Releases with multiple discs/sides                                 │
+  │   • Handle track position formats (1, A1, CD1-1, etc.)                   │
+  │   • Test with releases that have missing metadata                        │
+  │   • Verify MutationObserver works for Discogs dynamic content            │
+  └──────────────────────────────────────────────────────────────────────────┘
+
+  FILES TO MODIFY:
+    • Hydra+_Extension/manifest.json (add Discogs permissions)
+    • Hydra+_Extension/content.js (add Discogs DOM parsing and buttons)
+    • Hydra+_Plugin/Server/bridge-server.js (optional: Discogs API support)
+    • Hydra+_Extension/popup.html + popup.js (add Discogs API credentials UI)
+
+═══════════════════════════════════════════════════════════════════════════════
+  [2] SPOTIFY DESKTOP APP INTEGRATION
+═══════════════════════════════════════════════════════════════════════════════
+
+  ┌─ PROBLEM ────────────────────────────────────────────────────────────────┐
+  │ Current implementation only works with Spotify Web Player in browser.    │
+  │ Many users prefer the Spotify Desktop app, which cannot use browser      │
+  │ extensions. Users must switch to web player to use Hydra+.               │
+  └──────────────────────────────────────────────────────────────────────────┘
+
+  ┌─ SOLUTION ───────────────────────────────────────────────────────────────┐
+  │ Use Python plugin to inject custom UI elements directly into Spotify     │
+  │ Desktop app via:                                                          │
+  │ • Spicetify (custom apps/extensions for Spotify Desktop)                 │
+  │ • OR Python accessibility/UI automation to overlay buttons               │
+  │ • OR Spotify local API monitoring with system tray integration           │
+  └──────────────────────────────────────────────────────────────────────────┘
+
+  ┌─ IMPLEMENTATION PLAN ────────────────────────────────────────────────────┐
+  │                                                                           │
+  │ APPROACH A: Spicetify Custom App (Recommended)                           │
+  │ ────────────────────────────────────────────────────────────────────────│
+  │                                                                           │
+  │ STEP 1: Create Spicetify Extension                                       │
+  │   • Create new directory: Hydra+_Spicetify/                              │
+  │   • Create extension manifest.json for Spicetify                         │
+  │   • Create JavaScript extension file hydra-plus.js                       │
+  │   • Use Spicetify's Player API to monitor:                               │
+  │     - Spicetify.Player.data (current track info)                         │
+  │     - Spicetify.Player.addEventListener('songchange', callback)          │
+  │   • Extract metadata from Spicetify.Player.data:                         │
+  │     { uri, name, artists, album, duration_ms }                           │
+  │                                                                           │
+  │ STEP 2: UI Button Injection in Spotify App                               │
+  │   • Use Spicetify.React components to create custom buttons              │
+  │   • Inject buttons into:                                                 │
+  │     - Now Playing bar (next to like/add buttons)                         │
+  │     - Track rows in playlists/albums (using Spicetify.ContextMenu)       │
+  │     - Album view action bar                                              │
+  │   • Style buttons to match Spotify's design system                       │
+  │   • Use Spicetify.SVGIcons or custom SVG for Nicotine+ icon              │
+  │                                                                           │
+  │ STEP 3: Communication with Bridge Server                                 │
+  │   • Spicetify extensions can make HTTP requests (fetch API)              │
+  │   • Send track data to http://127.0.0.1:3847/search when button clicked  │
+  │   • Reuse existing bridge server endpoints (no changes needed)           │
+  │   • Handle errors with Spicetify.showNotification() for user feedback    │
+  │                                                                           │
+  │ STEP 4: Installation & Auto-deployment                                   │
+  │   • Update __init__.py plugin to:                                        │
+  │     - Check if Spicetify is installed (look for spicetify.exe)           │
+  │     - Auto-copy extension to Spicetify extensions folder                 │
+  │     - Run: spicetify config extensions hydra-plus.js                     │
+  │     - Run: spicetify apply (to reload Spotify)                           │
+  │   • Create install_spicetify.bat helper script for manual setup          │
+  │                                                                           │
+  │ STEP 5: Settings Sync                                                    │
+  │   • Store settings in LocalStorage via Spicetify.LocalStorage API        │
+  │   • Add settings page in Spicetify using Spicetify.PopupModal            │
+  │   • Allow configuration of:                                              │
+  │     - Auto-download preference                                           │
+  │     - Metadata override preference                                       │
+  │     - Bridge server port (if changed from default 3847)                  │
+  │                                                                           │
+  │ ────────────────────────────────────────────────────────────────────────│
+  │ APPROACH B: Python UI Automation (Alternative)                           │
+  │ ────────────────────────────────────────────────────────────────────────│
+  │                                                                           │
+  │ STEP 1: Monitor Spotify Desktop via Windows API                          │
+  │   • Use pywinauto or pyautogui to detect Spotify window                  │
+  │   • Monitor Spotify's local API endpoint (http://127.0.0.1:4381)         │
+  │     - Requires Spotify token extraction (complex, security concerns)     │
+  │   • Poll current track from Windows Media Transport Controls API         │
+  │                                                                           │
+  │ STEP 2: System Tray Integration                                          │
+  │   • Create system tray icon using pystray                                │
+  │   • Add context menu items:                                              │
+  │     - "Download Current Track"                                           │
+  │     - "Download Current Album"                                           │
+  │     - "Settings"                                                         │
+  │   • Use global hotkeys (keyboard library) for quick download             │
+  │                                                                           │
+  │ STEP 3: Clipboard Monitoring (Fallback)                                  │
+  │   • Monitor clipboard for Spotify URIs (spotify:track:xxxxx)             │
+  │   • Auto-parse and queue downloads when Spotify link detected            │
+  │   • Use pyperclip for clipboard access                                   │
+  │                                                                           │
+  │ NOTE: Approach B is less seamless than Spicetify but doesn't require     │
+  │       user to install Spicetify. Consider offering both options.         │
+  └──────────────────────────────────────────────────────────────────────────┘
+
+  FILES TO CREATE:
+    • Hydra+_Spicetify/manifest.json
+    • Hydra+_Spicetify/hydra-plus.js
+    • install_spicetify.bat (installation helper)
+
+  FILES TO MODIFY:
+    • Hydra+_Plugin/__init__.py (add Spicetify auto-deployment)
+    • README.txt (add Spicetify installation instructions)
+
+═══════════════════════════════════════════════════════════════════════════════
+  [3] DOWNLOAD PREFERENCES IN POPUP (MP3, LOSSLESS)
+═══════════════════════════════════════════════════════════════════════════════
+
+  ┌─ PROBLEM ────────────────────────────────────────────────────────────────┐
+  │ Users have different quality preferences for downloads:                  │
+  │ • Some prefer small MP3 files for portability                            │
+  │ • Others want lossless formats (FLAC, ALAC) for archival quality         │
+  │ Currently no way to specify download format preference in UI.            │
+  └──────────────────────────────────────────────────────────────────────────┘
+
+  ┌─ SOLUTION ───────────────────────────────────────────────────────────────┐
+  │ Add format preference UI in extension popup:                             │
+  │ • Radio buttons or dropdown to select: MP3 / FLAC / Both                 │
+  │ • Quality selector for MP3: 128kbps / 192kbps / 320kbps / V0             │
+  │ • Preference stored in chrome.storage and sent with each search request  │
+  │ • Python plugin filters Soulseek results by preferred format             │
+  └──────────────────────────────────────────────────────────────────────────┘
+
+  ┌─ IMPLEMENTATION PLAN ────────────────────────────────────────────────────┐
+  │                                                                           │
+  │ STEP 1: Update Extension Popup UI                                        │
+  │ ────────────────────────────────────────────────────────────────────────│
+  │   • Edit popup.html to add new preferences section:                      │
+  │                                                                           │
+  │     <div class="preference-section">                                     │
+  │       <h3>Download Preferences</h3>                                      │
+  │       <label>Format:</label>                                             │
+  │       <select id="formatPreference">                                     │
+  │         <option value="mp3">MP3 (lossy)</option>                         │
+  │         <option value="flac">FLAC (lossless)</option>                    │
+  │         <option value="alac">ALAC (Apple Lossless)</option>              │
+  │         <option value="any">Any format (fastest)</option>                │
+  │       </select>                                                           │
+  │                                                                           │
+  │       <label>MP3 Quality (if applicable):</label>                        │
+  │       <select id="mp3Quality">                                           │
+  │         <option value="320">320 kbps CBR</option>                        │
+  │         <option value="V0">V0 VBR (~245 kbps)</option>                   │
+  │         <option value="V2">V2 VBR (~190 kbps)</option>                   │
+  │         <option value="192">192 kbps CBR</option>                        │
+  │       </select>                                                           │
+  │                                                                           │
+  │       <label>                                                             │
+  │         <input type="checkbox" id="allowLowerQuality">                   │
+  │         Allow lower quality if preferred not available                   │
+  │       </label>                                                            │
+  │     </div>                                                                │
+  │                                                                           │
+  │ STEP 2: Update popup.js to Store Preferences                             │
+  │ ────────────────────────────────────────────────────────────────────────│
+  │   • Add event listeners for new UI elements                              │
+  │   • Load preferences on popup open:                                      │
+  │     chrome.storage.sync.get(['formatPreference', 'mp3Quality', ...])     │
+  │   • Save preferences on change:                                          │
+  │     chrome.storage.sync.set({                                            │
+  │       formatPreference: selectedFormat,                                  │
+  │       mp3Quality: selectedQuality,                                       │
+  │       allowLowerQuality: allowLower                                      │
+  │     })                                                                    │
+  │   • Show/hide MP3 quality selector based on format selection             │
+  │                                                                           │
+  │ STEP 3: Update content.js to Send Preferences                            │
+  │ ────────────────────────────────────────────────────────────────────────│
+  │   • Modify sendToNicotine() function to include format preferences:      │
+  │     const prefs = await chrome.storage.sync.get([                        │
+  │       'formatPreference', 'mp3Quality', 'allowLowerQuality'              │
+  │     ]);                                                                   │
+  │   • Add to POST body:                                                    │
+  │     body: JSON.stringify({                                               │
+  │       ...existing fields...,                                             │
+  │       format_preference: prefs.formatPreference || 'any',                │
+  │       mp3_quality: prefs.mp3Quality || '320',                            │
+  │       allow_lower_quality: prefs.allowLowerQuality !== false             │
+  │     })                                                                    │
+  │                                                                           │
+  │ STEP 4: Update Bridge Server to Pass Preferences                         │
+  │ ────────────────────────────────────────────────────────────────────────│
+  │   • Modify bridge-server.js /search and /search-album endpoints:         │
+  │     const searchData = {                                                 │
+  │       ...existing fields...,                                             │
+  │       format_preference: data.format_preference || 'any',                │
+  │       mp3_quality: data.mp3_quality || '320',                            │
+  │       allow_lower_quality: data.allow_lower_quality !== false            │
+  │     };                                                                    │
+  │   • Store in nicotine-queue.json with search data                        │
+  │                                                                           │
+  │ STEP 5: Update Python Plugin to Filter Results                           │
+  │ ────────────────────────────────────────────────────────────────────────│
+  │   • Modify __init__.py search result processing:                         │
+  │     - Read format_preference from search data                            │
+  │     - In search_results_received callback, filter results by:            │
+  │       * File extension (.mp3, .flac, .m4a, etc.)                         │
+  │       * Bitrate for MP3 files (use mutagen to inspect)                   │
+  │     - Prioritize exact matches (320kbps if requested)                    │
+  │     - Fallback to lower quality only if allow_lower_quality is true      │
+  │   • Add scoring system:                                                  │
+  │     score = base_score + format_bonus + quality_bonus                    │
+  │     format_bonus = 100 if matches preference, 0 otherwise                │
+  │     quality_bonus = based on bitrate proximity to target                 │
+  │                                                                           │
+  │ STEP 6: User Feedback in Console/Logs                                    │
+  │ ────────────────────────────────────────────────────────────────────────│
+  │   • Log format filtering in Nicotine+ console:                           │
+  │     "[Hydra+] Searching for FLAC format..."                              │
+  │     "[Hydra+] Found 15 results, 3 match FLAC preference"                 │
+  │     "[Hydra+] Selecting best match: Artist - Track.flac (1411kbps)"      │
+  │   • Add warning if no matches found:                                     │
+  │     "[Hydra+] No FLAC results found, searching MP3 as fallback..."       │
+  └──────────────────────────────────────────────────────────────────────────┘
+
+  FILES TO MODIFY:
+    • Hydra+_Extension/popup.html (add UI elements)
+    • Hydra+_Extension/popup.js (add preference handling)
+    • Hydra+_Extension/content.js (send preferences to bridge)
+    • Hydra+_Plugin/Server/bridge-server.js (pass preferences to queue)
+    • Hydra+_Plugin/__init__.py (filter results by format/quality)
+
+═══════════════════════════════════════════════════════════════════════════════
+  [4] LOSSLESS AUTO-CONVERSION (FLAC/ALAC → MP3/AIFF)
+═══════════════════════════════════════════════════════════════════════════════
+
+  ┌─ PROBLEM ────────────────────────────────────────────────────────────────┐
+  │ Users may want to download lossless for archival but also need lossy     │
+  │ versions for portable devices. Manual conversion is time-consuming.      │
+  │ Some devices only support specific formats (iOS prefers ALAC/AIFF).      │
+  └──────────────────────────────────────────────────────────────────────────┘
+
+  ┌─ SOLUTION ───────────────────────────────────────────────────────────────┐
+  │ Automatically convert lossless downloads to user's preferred format:     │
+  │ • Download FLAC, auto-convert to MP3 320kbps (keep or delete original)   │
+  │ • Download FLAC, auto-convert to AIFF for iTunes/iOS compatibility       │
+  │ • Use FFmpeg for high-quality, fast conversion                           │
+  │ • Option to keep both lossless and lossy copies                          │
+  └──────────────────────────────────────────────────────────────────────────┘
+
+  ┌─ IMPLEMENTATION PLAN ────────────────────────────────────────────────────┐
+  │                                                                           │
+  │ STEP 1: Add Conversion Preferences to Popup UI                           │
+  │ ────────────────────────────────────────────────────────────────────────│
+  │   • Add to popup.html preferences section:                               │
+  │                                                                           │
+  │     <div class="conversion-section">                                     │
+  │       <h3>Lossless Conversion</h3>                                       │
+  │       <label>                                                             │
+  │         <input type="checkbox" id="autoConvertLossless">                 │
+  │         Auto-convert lossless downloads                                  │
+  │       </label>                                                            │
+  │                                                                           │
+  │       <label>Convert to:</label>                                         │
+  │       <select id="conversionFormat">                                     │
+  │         <option value="mp3">MP3</option>                                 │
+  │         <option value="aiff">AIFF (Apple)</option>                       │
+  │         <option value="m4a">AAC/M4A</option>                             │
+  │       </select>                                                           │
+  │                                                                           │
+  │       <label>MP3 Conversion Quality:</label>                             │
+  │       <select id="conversionQuality">                                    │
+  │         <option value="320">320 kbps</option>                            │
+  │         <option value="V0">V0 (~245 kbps)</option>                       │
+  │         <option value="V2">V2 (~190 kbps)</option>                       │
+  │       </select>                                                           │
+  │                                                                           │
+  │       <label>                                                             │
+  │         <input type="checkbox" id="keepOriginal">                        │
+  │         Keep original lossless file after conversion                     │
+  │       </label>                                                            │
+  │     </div>                                                                │
+  │                                                                           │
+  │ STEP 2: FFmpeg Integration in Python Plugin                              │
+  │ ────────────────────────────────────────────────────────────────────────│
+  │   • Add FFmpeg dependency:                                               │
+  │     - Include ffmpeg.exe in Hydra+_Plugin/bin/ folder                    │
+  │     - OR detect system FFmpeg installation                               │
+  │     - Add fallback download URL if not found                             │
+  │   • Create conversion utility in __init__.py:                            │
+  │                                                                           │
+  │     import subprocess                                                     │
+  │     def convert_audio(input_path, output_format, quality, keep_original):│
+  │         # Determine FFmpeg path                                          │
+  │         ffmpeg_path = find_ffmpeg()                                      │
+  │         if not ffmpeg_path:                                              │
+  │             self.log("[Hydra+] FFmpeg not found, skipping conversion")   │
+  │             return None                                                  │
+  │                                                                           │
+  │         # Build FFmpeg command                                           │
+  │         output_path = input_path.replace('.flac', f'.{output_format}')   │
+  │         cmd = [ffmpeg_path, '-i', input_path]                            │
+  │                                                                           │
+  │         if output_format == 'mp3':                                       │
+  │             if quality == '320':                                         │
+  │                 cmd.extend(['-b:a', '320k'])                             │
+  │             elif quality == 'V0':                                        │
+  │                 cmd.extend(['-q:a', '0'])                                │
+  │             elif quality == 'V2':                                        │
+  │                 cmd.extend(['-q:a', '2'])                                │
+  │         elif output_format == 'aiff':                                    │
+  │             cmd.extend(['-acodec', 'pcm_s16be'])                         │
+  │         elif output_format == 'm4a':                                     │
+  │             cmd.extend(['-c:a', 'aac', '-b:a', '256k'])                  │
+  │                                                                           │
+  │         cmd.append(output_path)                                          │
+  │                                                                           │
+  │         # Execute conversion                                             │
+  │         result = subprocess.run(cmd, capture_output=True, text=True)     │
+  │         if result.returncode == 0:                                       │
+  │             self.log(f"[Hydra+] Converted: {output_path}")               │
+  │             # Delete original if requested                               │
+  │             if not keep_original:                                        │
+  │                 os.remove(input_path)                                    │
+  │             return output_path                                           │
+  │         else:                                                            │
+  │             self.log(f"[Hydra+] Conversion failed: {result.stderr}")     │
+  │             return None                                                  │
+  │                                                                           │
+  │ STEP 3: Trigger Conversion After Download Complete                       │
+  │ ────────────────────────────────────────────────────────────────────────│
+  │   • In download_finished callback in __init__.py:                        │
+  │     - Check if file is lossless format (.flac, .ape, .alac, .wav)        │
+  │     - Read conversion preferences from search data                       │
+  │     - If auto_convert enabled, call convert_audio()                      │
+  │     - Update file path for metadata processing if converted              │
+  │                                                                           │
+  │   def download_finished_notification(self, user, virtual_path, real_path):│
+  │       ...existing code...                                                 │
+  │                                                                           │
+  │       # Check if conversion is needed                                    │
+  │       if search.get('auto_convert_lossless'):                            │
+  │           ext = os.path.splitext(real_path)[1].lower()                   │
+  │           if ext in ['.flac', '.ape', '.wav', '.alac']:                  │
+  │               converted_path = self.convert_audio(                       │
+  │                   real_path,                                             │
+  │                   search.get('conversion_format', 'mp3'),                │
+  │                   search.get('conversion_quality', '320'),               │
+  │                   search.get('keep_original', True)                      │
+  │               )                                                           │
+  │               if converted_path:                                         │
+  │                   real_path = converted_path  # Use converted file       │
+  │                                                                           │
+  │       # Continue with metadata processing on final file                  │
+  │       ...existing metadata code...                                       │
+  │                                                                           │
+  │ STEP 4: Metadata Preservation During Conversion                          │
+  │ ────────────────────────────────────────────────────────────────────────│
+  │   • FFmpeg can copy metadata with -map_metadata flag:                    │
+  │     cmd.extend(['-map_metadata', '0'])                                   │
+  │   • For cover art preservation:                                          │
+  │     cmd.extend(['-c:v', 'copy'])  # Copy album art stream                │
+  │   • Alternatively, extract metadata before conversion and re-apply:      │
+  │     - Use mutagen to read FLAC tags                                      │
+  │     - Run FFmpeg conversion                                              │
+  │     - Use mutagen to write tags to MP3/M4A                               │
+  │                                                                           │
+  │ STEP 5: Progress Feedback for Long Conversions                           │
+  │ ────────────────────────────────────────────────────────────────────────│
+  │   • Parse FFmpeg stderr for progress info:                               │
+  │     - FFmpeg outputs: "time=00:01:23.45" during conversion               │
+  │     - Calculate percentage: (current_time / total_duration) * 100        │
+  │   • Log progress to Nicotine+ console:                                   │
+  │     "[Hydra+] Converting: Artist - Track.flac → MP3 (45%)"               │
+  │   • Use threading to avoid blocking Nicotine+ during conversion          │
+  │                                                                           │
+  │ STEP 6: Error Handling & Fallbacks                                       │
+  │ ────────────────────────────────────────────────────────────────────────│
+  │   • If FFmpeg not found:                                                 │
+  │     - Log warning: "[Hydra+] FFmpeg not installed, skipping conversion"  │
+  │     - Continue with lossless file (don't fail entire download)           │
+  │   • If conversion fails (corrupt file, unsupported codec):               │
+  │     - Keep original lossless file                                        │
+  │     - Log error with details                                             │
+  │   • If disk space low:                                                   │
+  │     - Check available space before conversion                            │
+  │     - Skip if insufficient space for both files                          │
+  └──────────────────────────────────────────────────────────────────────────┘
+
+  FILES TO MODIFY:
+    • Hydra+_Extension/popup.html (add conversion UI)
+    • Hydra+_Extension/popup.js (add conversion preference handling)
+    • Hydra+_Extension/content.js (send conversion preferences)
+    • Hydra+_Plugin/Server/bridge-server.js (pass conversion prefs to queue)
+    • Hydra+_Plugin/__init__.py (implement FFmpeg conversion logic)
+
+  FILES TO ADD:
+    • Hydra+_Plugin/bin/ffmpeg.exe (Windows FFmpeg binary, optional)
+    • Hydra+_Plugin/bin/ffmpeg (Linux binary, optional)
+
+  DEPENDENCIES:
+    • FFmpeg (https://ffmpeg.org/download.html)
+    • Install instructions to be added to README.txt
+
+═══════════════════════════════════════════════════════════════════════════════
+  IMPLEMENTATION PRIORITY
+═══════════════════════════════════════════════════════════════════════════════
+
+  1. [HIGH]   Feature #3: Download Preferences in Popup
+              └─ Low complexity, high user value, no external dependencies
+
+  2. [HIGH]   Feature #4: Lossless Auto-Conversion
+              └─ Moderate complexity, depends on #3, requires FFmpeg
+
+  3. [MEDIUM] Feature #1: Discogs Integration
+              └─ Moderate complexity, similar to existing Spotify logic
+
+  4. [LOW]    Feature #2: Spotify Desktop App Integration
+              └─ High complexity, requires Spicetify or complex Windows API work
+
+═══════════════════════════════════════════════════════════════════════════════

@@ -1,4 +1,7 @@
 {
+  "name": "hydra-plus-bridge",
+  "version": "0.1.3",
+  "description": "Hydra+ Bridge Server - Nicotine+ to Spotify connection bridge",
   "dependencies": {
     "node-id3": "^0.2.9"
   }

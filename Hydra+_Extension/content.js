@@ -175,23 +175,25 @@ async function sendToNicotine(trackInfo) {
   // Format query as "artist track" (space-separated, better for Soulseek)
   const query = `${trackInfo.artistName} ${trackInfo.trackName}`;
 
-  // Get settings from Chrome storage
-  let autoDownload = false;
+  // Get settings from Chrome storage with safe defaults
+  let autoDownload = true; // Default to true (matches popup.js default)
   let metadataOverride = true; // Default to true
+
+  // Safely attempt to read from Chrome storage
   try {
-    const result = await chrome.storage.sync.get(['autoDownload', 'metadataOverride']);
-    autoDownload = result.autoDownload || false;
-    metadataOverride = result.metadataOverride !== false; // Default to true
-  } catch (error) {
-    // Extension context invalidated (happens when extension reloads)
-    // IMPROVED: Graceful degradation instead of page reload
-    if (error.message.includes('Extension context invalidated')) {
-      console.warn('[Hydra+] Extension context invalidated - using default settings');
-      // Continue with default values instead of forcing page reload
-      return { success: false, error: 'Extension reloaded - using defaults' };
+    // Check if Chrome extension API is available
+    if (typeof chrome !== 'undefined' && chrome?.storage?.sync) {
+      const result = await chrome.storage.sync.get(['autoDownload', 'metadataOverride']);
+      autoDownload = result.autoDownload !== false; // Default to true
+      metadataOverride = result.metadataOverride !== false; // Default to true
+    } else {
+      // Chrome API not available, use defaults
+      console.warn('[Hydra+] Chrome storage API not available - using default settings');
     }
-    // Other errors, continue with default value
-    console.warn('[Hydra+] Could not access storage:', error);
+  } catch (error) {
+    // Any error accessing storage - use defaults and continue
+    console.warn('[Hydra+] Could not access storage - using default settings:', error.message || error);
+    // Continue with default values (don't return, just log and proceed)
   }
 
   console.log('[Nicotine+] Attempting to send:', query);
@@ -488,20 +490,25 @@ function getAllAlbumTracks(albumName, albumArtist) {
  * Send album to Nicotine+
  */
 async function sendAlbumToNicotine(albumInfo, tracks) {
-  // Get settings from Chrome storage
-  let autoDownload = false;
-  let metadataOverride = true;
+  // Get settings from Chrome storage with safe defaults
+  let autoDownload = true; // Default to true (matches popup.js default)
+  let metadataOverride = true; // Default to true
+
+  // Safely attempt to read from Chrome storage
   try {
-    const result = await chrome.storage.sync.get(['autoDownload', 'metadataOverride']);
-    autoDownload = result.autoDownload || false;
-    metadataOverride = result.metadataOverride !== false;
-  } catch (error) {
-    // IMPROVED: Graceful degradation instead of page reload
-    if (error.message.includes('Extension context invalidated')) {
-      console.warn('[Hydra+] Extension context invalidated - using default settings');
-      return { success: false, error: 'Extension reloaded - using defaults' };
+    // Check if Chrome extension API is available
+    if (typeof chrome !== 'undefined' && chrome?.storage?.sync) {
+      const result = await chrome.storage.sync.get(['autoDownload', 'metadataOverride']);
+      autoDownload = result.autoDownload !== false; // Default to true
+      metadataOverride = result.metadataOverride !== false; // Default to true
+    } else {
+      // Chrome API not available, use defaults
+      console.warn('[Hydra+] Chrome storage API not available - using default settings');
     }
-    console.warn('[Hydra+] Could not access storage:', error);
+  } catch (error) {
+    // Any error accessing storage - use defaults and continue
+    console.warn('[Hydra+] Could not access storage - using default settings:', error.message || error);
+    // Continue with default values (don't return, just log and proceed)
   }
 
   console.log('[Album] Attempting to send:', albumInfo.albumArtist, '-', albumInfo.albumName);

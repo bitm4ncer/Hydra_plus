@@ -959,21 +959,38 @@ async function processMetadata(data, res) {
         console.log('[Hydra+: META] Continuing metadata fetch in background...');
 
         // Step 2: Fetch extended metadata from Spotify page (year, track#, image)
-        const spotifyMeta = await fetchSpotifyMetadata(track_id);
+        let spotifyMeta = {};
+        try {
+          spotifyMeta = await fetchSpotifyMetadata(track_id);
+        } catch (spotifyError) {
+          console.error(`[Hydra+: META] ✗ Spotify metadata error: ${spotifyError.message}`);
+          spotifyMeta = {};
+        }
 
         // Step 3: Fetch API metadata if credentials are available (genre, label)
         let apiMeta = {};
         if (track_id) {
           if (spotifyCredentials.clientId && spotifyCredentials.clientSecret) {
             console.log('[Hydra+: API] Fetching metadata...');
-            apiMeta = await fetchSpotifyAPIMetadata(track_id);
+            try {
+              apiMeta = await fetchSpotifyAPIMetadata(track_id);
+            } catch (apiError) {
+              console.error(`[Hydra+: API] ✗ API metadata error: ${apiError.message}`);
+              apiMeta = {};
+            }
           } else {
             console.log('[Hydra+: API] No credentials (skipping genre/label)');
           }
         }
 
         // Step 4: Download cover art
-        const coverData = await downloadCoverArt(spotifyMeta.imageUrl);
+        let coverData = null;
+        try {
+          coverData = await downloadCoverArt(spotifyMeta.imageUrl);
+        } catch (coverError) {
+          console.error(`[Hydra+: META] ✗ Cover download error: ${coverError.message}`);
+          coverData = null;
+        }
 
         // Step 5: Write tags with node-id3
         const tags = {

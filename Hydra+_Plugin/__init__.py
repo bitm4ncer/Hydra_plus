@@ -161,6 +161,37 @@ class Plugin(BasePlugin):
             self.log(f"[Hydra+] ✗ ERROR starting server: {e}")
             return False
 
+    def _cleanup_server_process(self):
+        """Kill any existing server process and clean up."""
+        try:
+            # Try to terminate our tracked process first
+            if self.server_process:
+                try:
+                    self.log("[Hydra+] Terminating existing server process...")
+                    self.server_process.terminate()
+                    self.server_process.wait(timeout=3)
+                    self.log("[Hydra+] ✓ Old process terminated")
+                except:
+                    try:
+                        self.server_process.kill()
+                        self.log("[Hydra+] ✓ Old process killed (force)")
+                    except:
+                        pass
+                finally:
+                    self.server_process = None
+
+            # Also kill any node.js processes running bridge-server.js (Windows-specific cleanup)
+            if os.name == 'nt':  # Windows
+                try:
+                    import subprocess
+                    # Find and kill any node processes running bridge-server.js
+                    subprocess.run(['taskkill', '/F', '/FI', 'IMAGENAME eq node.exe', '/FI', f'WINDOWTITLE eq *bridge-server.js*'],
+                                   capture_output=True, timeout=5)
+                except:
+                    pass
+        except Exception as e:
+            self.log(f"[Hydra+] Cleanup error (non-fatal): {e}")
+
     def _verify_server_startup(self):
         """Background task to verify server started successfully."""
         max_attempts = 10
@@ -335,7 +366,8 @@ class Plugin(BasePlugin):
             metadata_override: Whether to override metadata after download
             search_type: 'track' or 'album' - determines search behavior
         """
-        self.log(f"[Hydra+] >> NEW SEARCH << {query} (type={search_type}, auto_download={auto_download})")
+        auto_dl_status = "Auto Download enabled" if auto_download else "Auto Download disabled"
+        self.log(f"[Hydra+] >> NEW SEARCH << {query} ({auto_dl_status})")
         try:
             # Use the core.search.do_search method
             # Mode "global" = network-wide search
@@ -371,6 +403,7 @@ class Plugin(BasePlugin):
                     'current_attempt': -1,  # -1 = not started, 0+ = attempt index
                     'download_started_at': None,
                     'last_download_path': None,
+                    'last_download_user': None,  # Username of last download attempt (for abort)
                     'result_count': 0
                 }
                 self.log(f"[Hydra+: DL] ✓ Tracking search (token={search_token})")
@@ -847,6 +880,7 @@ class Plugin(BasePlugin):
             search_info['current_attempt'] = attempt_index
             search_info['download_started_at'] = time.time()
             search_info['last_download_path'] = candidate['file']
+            search_info['last_download_user'] = candidate['user']  # Store username for abort
 
             # Track this download for monitoring
             self.active_downloads[candidate['file']] = token
@@ -878,9 +912,55 @@ class Plugin(BasePlugin):
         """
         next_attempt = search_info['current_attempt'] + 1
 
-        # Remove failed download from tracking
-        if search_info['last_download_path'] in self.active_downloads:
-            del self.active_downloads[search_info['last_download_path']]
+        self.log(f"[Hydra+: DL] 🔄 Attempting fallback (reason: {reason})")
+        self.log(f"[Hydra+: DL] Last download path: {search_info.get('last_download_path', 'NONE')}")
+
+        # Remove failed download from tracking and abort it from Nicotine+ queue
+        if search_info.get('last_download_path') and search_info['last_download_path'] in self.active_downloads:
+            virtual_path = search_info['last_download_path']
+            username = search_info.get('last_download_user')
+            self.log(f"[Hydra+: DL] Attempting to abort: {virtual_path}")
+            self.log(f"[Hydra+: DL] Username: {username}")
+
+            # Abort the download in Nicotine+ to remove it from queue
+            if hasattr(self.core, 'downloads') and hasattr(self.core.downloads, 'abort_downloads') and username:
+                try:
+                    # Use abort_downloads which works for both queued and active downloads
+                    self.log(f"[Hydra+: DL] Calling abort_downloads for user: {username}")
+                    self.core.downloads.abort_downloads([(username, virtual_path)])
+                    self.log(f"[Hydra+: DL] ✓ Aborted download via abort_downloads")
+                except Exception as e:
+                    self.log(f"[Hydra+: DL] ✗ abort_downloads failed: {e}")
+                    import traceback
+                    self.log(f"[Hydra+: DL] {traceback.format_exc()}")
+
+                    # Fallback: try abort_transfer if abort_downloads failed
+                    if hasattr(self.core.downloads, 'transfers'):
+                        transfer_count = len(self.core.downloads.transfers)
+                        self.log(f"[Hydra+: DL] Fallback: checking {transfer_count} active transfers...")
+
+                        for transfer in self.core.downloads.transfers.values():
+                            if hasattr(transfer, 'virtual_path') and transfer.virtual_path == virtual_path:
+                                self.log(f"[Hydra+: DL] Found transfer, attempting abort_transfer...")
+                                if hasattr(self.core.downloads, 'abort_transfer'):
+                                    try:
+                                        self.core.downloads.abort_transfer(transfer)
+                                        self.log(f"[Hydra+: DL] ✓ Aborted via abort_transfer")
+                                    except Exception as e2:
+                                        self.log(f"[Hydra+: DL] ✗ abort_transfer also failed: {e2}")
+                                break
+            elif not username:
+                self.log(f"[Hydra+: DL] ✗ Cannot abort - username not available")
+            else:
+                self.log(f"[Hydra+: DL] ✗ abort_downloads method not available")
+                # List available methods for debugging
+                if hasattr(self.core, 'downloads'):
+                    methods = [m for m in dir(self.core.downloads) if not m.startswith('_')]
+                    self.log(f"[Hydra+: DL] Available methods: {', '.join(methods[:10])}")
+
+            # Remove from tracking
+            del self.active_downloads[virtual_path]
+            self.log(f"[Hydra+: DL] Removed from tracking dict")
 
         # Try next candidate (logging happens in _try_download_candidate)
         self._try_download_candidate(token, search_info, next_attempt, f"Trying next candidate")
@@ -2023,15 +2103,30 @@ class Plugin(BasePlugin):
 
         while self.running:
             try:
-                # Check if server is running and warn if it went offline
+                # Check if server is running and auto-restart if it went offline
                 server_running = self._is_server_running()
                 if self.server_was_running and not server_running:
-                    # Server went offline!
+                    # Server went offline - attempt auto-restart
                     self.log("════════════════════════════════════════════════════════════════")
-                    self.log("  ⚠️  KILL SERVER - Please restart Nicotine+ manually")
-                    self.log("  This will restart the server with updated settings")
+                    self.log("  ⚠️  Bridge server went offline - attempting auto-restart...")
                     self.log("════════════════════════════════════════════════════════════════")
                     self.server_was_running = False
+
+                    # Attempt to restart the server
+                    if self.settings.get('auto_start_server', True):
+                        # First, clean up any zombie processes
+                        self._cleanup_server_process()
+
+                        # Wait a moment for port to be released
+                        time.sleep(1)
+
+                        # Now start fresh server
+                        if self._start_server():
+                            self.log("[Hydra+] ✓ Bridge server restarted successfully")
+                        else:
+                            self.log("[Hydra+] ✗ Failed to restart bridge server - please restart Nicotine+ manually")
+                    else:
+                        self.log("[Hydra+] Auto-start disabled - please restart Nicotine+ manually")
                 elif server_running:
                     self.server_was_running = True
 
