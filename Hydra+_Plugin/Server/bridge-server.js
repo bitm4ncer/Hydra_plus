@@ -813,6 +813,9 @@ async function renameFile(oldPath, artist, track, trackNumber) {
     const trackClean = sanitizeFilename(track);
 
     if (!artistClean || !trackClean) {
+      console.error(`[Hydra+: META] ✗ Cannot rename - missing artist or track name`);
+      console.error(`[Hydra+: META]   Artist: "${artist}" → "${artistClean}"`);
+      console.error(`[Hydra+: META]   Track: "${track}" → "${trackClean}"`);
       return oldPath; // Can't rename without artist and track
     }
 

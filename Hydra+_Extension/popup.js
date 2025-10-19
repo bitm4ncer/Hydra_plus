@@ -21,6 +21,111 @@ const saveCredentialsBtn = document.getElementById('saveCredentials');
 const savedIndicator = document.getElementById('savedIndicator');
 const apiErrorIndicator = document.getElementById('apiErrorIndicator');
 const resetServerBtn = document.getElementById('resetServerBtn');
+const consoleContainer = document.getElementById('consoleContainer');
+const consoleContent = document.getElementById('consoleContent');
+const toggleConsoleBtn = document.getElementById('toggleConsoleBtn');
+
+// Console management
+const MAX_CONSOLE_ENTRIES = 50;
+let consoleEvents = [];
+
+// Add event to console
+function addConsoleEvent(type, message, timestamp = null) {
+  const time = timestamp ? new Date(timestamp) : new Date();
+  const timeStr = time.toLocaleTimeString('en-US', { hour12: false });
+
+  const event = { type, message, time: timeStr, timestamp: time };
+  consoleEvents.push(event);
+
+  // Keep only last MAX_CONSOLE_ENTRIES
+  if (consoleEvents.length > MAX_CONSOLE_ENTRIES) {
+    consoleEvents.shift();
+  }
+
+  // Add to DOM
+  const entry = document.createElement('div');
+  entry.className = `console-entry console-${type}`;
+  entry.innerHTML = `
+    <span class="console-time">${timeStr}</span>
+    <span class="console-message">${message}</span>
+  `;
+
+  consoleContent.appendChild(entry);
+
+  // Remove oldest entries from DOM if over limit
+  while (consoleContent.children.length > MAX_CONSOLE_ENTRIES) {
+    consoleContent.removeChild(consoleContent.firstChild);
+  }
+
+  // Auto-scroll to bottom
+  consoleContent.scrollTop = consoleContent.scrollHeight;
+
+  // Store in chrome.storage.local for persistence
+  chrome.storage.local.set({ consoleEvents: consoleEvents });
+}
+
+// Load console events from storage
+function loadConsoleEvents() {
+  chrome.storage.local.get(['consoleEvents'], (data) => {
+    if (data.consoleEvents && data.consoleEvents.length > 0) {
+      consoleEvents = data.consoleEvents;
+
+      // Clear placeholder
+      consoleContent.innerHTML = '';
+
+      // Render events
+      consoleEvents.forEach(event => {
+        const entry = document.createElement('div');
+        entry.className = `console-entry console-${event.type}`;
+        entry.innerHTML = `
+          <span class="console-time">${event.time}</span>
+          <span class="console-message">${event.message}</span>
+        `;
+        consoleContent.appendChild(entry);
+      });
+
+      // Auto-scroll to bottom
+      consoleContent.scrollTop = consoleContent.scrollHeight;
+    }
+  });
+}
+
+// Toggle console visibility
+toggleConsoleBtn.addEventListener('click', () => {
+  const isCollapsed = consoleContainer.classList.toggle('collapsed');
+  toggleConsoleBtn.textContent = isCollapsed ? 'Show' : 'Hide';
+
+  // Save preference
+  chrome.storage.local.set({ consoleCollapsed: isCollapsed });
+});
+
+// Load console collapse state
+chrome.storage.local.get(['consoleCollapsed'], (data) => {
+  if (data.consoleCollapsed) {
+    consoleContainer.classList.add('collapsed');
+    toggleConsoleBtn.textContent = 'Show';
+  }
+});
+
+// Load console events on popup open
+loadConsoleEvents();
+
+// Demo mode: Simulate events for testing (remove this in production)
+// This demonstrates different event types when server doesn't provide events yet
+window.addEventListener('load', () => {
+  // Check if we should run demo mode (only if no events exist and it's first load)
+  chrome.storage.local.get(['hasShownDemo', 'consoleEvents'], (data) => {
+    if (!data.hasShownDemo && (!data.consoleEvents || data.consoleEvents.length === 0)) {
+      // Mark demo as shown
+      chrome.storage.local.set({ hasShownDemo: true });
+
+      // Show sample events with delay
+      setTimeout(() => {
+        addConsoleEvent('info', 'Console initialized - waiting for bridge events');
+      }, 500);
+    }
+  });
+});
 
 // Test Spotify API connection
 async function testSpotifyConnection(clientId, clientSecret) {
@@ -198,6 +303,7 @@ metadataOverrideToggle.addEventListener('change', () => {
 
 // Track server status globally
 let isServerOnline = false;
+let lastEventId = 0; // Track last processed event
 
 // Check server status
 async function checkServerStatus() {
@@ -220,18 +326,50 @@ async function checkServerStatus() {
       // IMPROVED: Send credentials only once when server comes online (not on every check)
       if (wasOffline) {
         sendCredentialsToServer();
+        addConsoleEvent('success', 'Bridge server connected');
+      }
+
+      // Process events if provided by server
+      if (data.events && Array.isArray(data.events)) {
+        // Filter out events we've already seen
+        const newEvents = data.events.filter(event => event.id > lastEventId);
+
+        newEvents.forEach(event => {
+          // Update last event ID
+          if (event.id > lastEventId) {
+            lastEventId = event.id;
+          }
+
+          // Add to console with appropriate type
+          addConsoleEvent(event.type || 'info', event.message, event.timestamp);
+        });
+
+        // Store last event ID
+        chrome.storage.local.set({ lastEventId: lastEventId });
       }
     } else {
       throw new Error('Server returned error');
     }
   } catch (error) {
+    const wasOnline = isServerOnline;
     serverStatus.classList.remove('online');
     serverStatus.classList.add('offline');
     serverStatusText.textContent = 'Server offline';
     isServerOnline = false;
     updateSaveButtonState();
+
+    if (wasOnline) {
+      addConsoleEvent('error', 'Bridge server disconnected');
+    }
   }
 }
+
+// Load last event ID from storage
+chrome.storage.local.get(['lastEventId'], (data) => {
+  if (data.lastEventId) {
+    lastEventId = data.lastEventId;
+  }
+});
 
 // Auto-save credentials when fields change (debounced)
 let saveTimeout;
@@ -321,6 +459,9 @@ saveCredentialsBtn.addEventListener('click', async () => {
 
       // Show connected state
       showConnectedState();
+
+      // Log to console
+      addConsoleEvent('success', 'Spotify API credentials connected');
     });
   } else {
     // Save failed state to prevent flash on next popup open
@@ -333,6 +474,9 @@ saveCredentialsBtn.addEventListener('click', async () => {
     setTimeout(() => {
       apiErrorIndicator.style.display = 'none';
     }, 3000);
+
+    // Log to console
+    addConsoleEvent('error', 'Spotify API connection failed');
   }
 });
 
@@ -380,6 +524,9 @@ resetServerBtn.addEventListener('click', async () => {
   const originalText = resetServerBtn.textContent;
   resetServerBtn.textContent = 'Restarting...';
 
+  // Log restart attempt
+  addConsoleEvent('info', 'Restarting bridge server...');
+
   try {
     // Call restart endpoint
     const response = await fetch(`${BRIDGE_URL}/restart`, {
@@ -424,6 +571,9 @@ resetServerBtn.addEventListener('click', async () => {
 
             // Send credentials to server after restart
             sendCredentialsToServer();
+
+            // Log success
+            addConsoleEvent('success', 'Bridge server restarted successfully');
           }
         } catch (error) {
           // Server still not up
@@ -434,6 +584,9 @@ resetServerBtn.addEventListener('click', async () => {
             // Reset button state
             resetServerBtn.disabled = false;
             resetServerBtn.textContent = originalText;
+
+            // Log timeout
+            addConsoleEvent('warning', 'Server restart timeout - check manually');
           }
         }
       }, 500);
@@ -447,5 +600,8 @@ resetServerBtn.addEventListener('click', async () => {
     // Reset button state
     resetServerBtn.disabled = false;
     resetServerBtn.textContent = originalText;
+
+    // Log error
+    addConsoleEvent('error', 'Server restart failed');
   }
 });

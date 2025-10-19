@@ -1949,10 +1949,16 @@ class Plugin(BasePlugin):
                                             actual_file_path = possible_path
                                             break
 
-                                # If file exists (original or renamed), consider it successful
-                                if os.path.exists(actual_file_path):
-                                    self.log(f"[Hydra+: ALBUM-META] ✓ Track was already processed before crash")
-                                    return (True, actual_file_path)
+                                # If file exists AND was properly renamed with artist name, consider it successful
+                                # Only the first format includes the artist name, others are incomplete
+                                if os.path.exists(actual_file_path) and actual_file_path != file_path:
+                                    # Verify it has the correct format with artist name
+                                    if artist_name and artist_name in os.path.basename(actual_file_path):
+                                        self.log(f"[Hydra+: ALBUM-META] ✓ Track was already processed before crash")
+                                        return (True, actual_file_path)
+                                    else:
+                                        self.log(f"[Hydra+: ALBUM-META] ⚠ File renamed but missing artist name, needs retry")
+                                        # Fall through to retry
 
                                 # File doesn't exist in any form, try retry
                                 self.log(f"[Hydra+: ALBUM-META] Retrying failed track: {os.path.basename(file_path)}")
@@ -2020,10 +2026,16 @@ class Plugin(BasePlugin):
                                             actual_file_path = possible_path
                                             break
 
-                                # If file exists (original or renamed), consider it successful
-                                if os.path.exists(actual_file_path):
-                                    self.log(f"[Hydra+: ALBUM-META] ✓ Track was already processed before crash")
-                                    return (True, actual_file_path)
+                                # If file exists AND was properly renamed with artist name, consider it successful
+                                # Only the first format includes the artist name, others are incomplete
+                                if os.path.exists(actual_file_path) and actual_file_path != file_path:
+                                    # Verify it has the correct format with artist name
+                                    if artist_name and artist_name in os.path.basename(actual_file_path):
+                                        self.log(f"[Hydra+: ALBUM-META] ✓ Track was already processed before crash")
+                                        return (True, actual_file_path)
+                                    else:
+                                        self.log(f"[Hydra+: ALBUM-META] ⚠ File renamed but missing artist name, needs retry")
+                                        # Fall through to retry
 
                                 # File doesn't exist in any form, try retry
                                 self.log(f"[Hydra+: ALBUM-META] Retrying failed track: {os.path.basename(file_path)}")

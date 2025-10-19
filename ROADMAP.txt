@@ -12,6 +12,19 @@ etc
 
 
 
+___________________________________________________________________
+Solution for missing metainfos when seraching via right click context menu. 
+also add a search input to the popup UI 
+
+Check spotify and discogs API for information that matches the search
+add metadata and cover artwork to that package
+
+____________________________________________________________________
+
+Live console  in popup. 
+follow process. get download updates: Track Ifos -  Download started, finished download XY,  etc.
+
+
 
 
 
