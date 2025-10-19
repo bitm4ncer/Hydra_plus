@@ -99,9 +99,15 @@ echo.
 echo  Copying new plugin files...
 echo.
 
-mkdir "%PLUGIN_DEST%" 2>nul
-mkdir "%PLUGIN_DEST%\Server" 2>nul
-xcopy /E /I /Y "%SCRIPT_DIR%Hydra+_Plugin" "%PLUGIN_DEST%" >nul 2>&1
+REM Use PowerShell for reliable recursive copy
+powershell -Command "Copy-Item -Path '%SCRIPT_DIR%Hydra+_Plugin' -Destination '%PLUGIN_DEST%' -Recurse -Force" >nul 2>&1
+
+if %errorlevel% neq 0 (
+    echo  PowerShell copy failed, trying xcopy...
+    mkdir "%PLUGIN_DEST%" 2>nul
+    mkdir "%PLUGIN_DEST%\Server" 2>nul
+    xcopy /E /I /Y "%SCRIPT_DIR%Hydra+_Plugin" "%PLUGIN_DEST%" >nul 2>&1
+)
 
 echo.
 echo  Clearing Node.js module cache...
