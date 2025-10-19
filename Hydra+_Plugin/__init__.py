@@ -1369,6 +1369,8 @@ class Plugin(BasePlugin):
             track_index: Index of track in album
             track_info: Track metadata dict with track_id, artist, track, album
         """
+        from threading import Thread
+
         def prefetch_worker():
             try:
                 from urllib.request import urlopen, Request
@@ -1654,11 +1656,20 @@ class Plugin(BasePlugin):
             self.log(f"[Hydra+: ALBUM-META] Starting batch processing...")
             self._process_album_metadata_batch(downloaded_tracks, search_info)
             self.log(f"[Hydra+: ALBUM-META] Batch processing complete, organizing folder...")
-            self._organize_album_folder(downloaded_tracks, search_info)
         except Exception as e:
-            self.log(f"[Hydra+: ALBUM-META] ✗ FATAL ERROR: {e}")
+            self.log(f"[Hydra+: ALBUM-META] ⚠ Error during metadata processing: {e}")
             import traceback
             self.log(f"[Hydra+: ALBUM-META] Traceback: {traceback.format_exc()}")
+            self.log(f"[Hydra+: ALBUM-META] Continuing to organize files despite errors...")
+
+        # CRITICAL: Always organize folder, even if metadata processing failed
+        # This ensures files are moved into album folder regardless of server crashes
+        try:
+            self._organize_album_folder(downloaded_tracks, search_info)
+        except Exception as e:
+            self.log(f"[Hydra+: ALBUM] ✗ Error organizing album folder: {e}")
+            import traceback
+            self.log(f"[Hydra+: ALBUM] Traceback: {traceback.format_exc()}")
 
     def download_finished_notification(self, user, virtual_path, real_path):
         """
