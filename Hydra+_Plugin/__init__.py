@@ -1241,22 +1241,41 @@ class Plugin(BasePlugin):
             del self.active_searches[token]
 
     def _get_download_directory(self, track_to_download):
-        """Get download directory from the first track's file path."""
+        """Get download directory from Nicotine+ configuration."""
         try:
-            import os
-            file_path = track_to_download.get('file_path', '')
-            if file_path:
-                # The file_path is a virtual path like: @@user@@/path/to/file.mp3
-                # We need to figure out where Nicotine+ will save it locally
-                # Try to get downloads folder from Nicotine+ settings
-                if hasattr(self.core, 'downloads') and hasattr(self.core.downloads, 'download_folder'):
-                    return self.core.downloads.download_folder
-                # Fallback: Try to get from config
-                if hasattr(self.core, 'config') and hasattr(self.core.config.sections, 'transfers'):
-                    return self.core.config.sections['transfers']['downloaddir']
+            # Try multiple methods to get the download directory
+
+            # Method 1: Check core.config
+            if hasattr(self.core, 'config'):
+                config = self.core.config
+                # Try modern config format
+                if hasattr(config, 'sections') and hasattr(config.sections, 'transfers'):
+                    download_dir = config.sections.get('transfers', {}).get('downloaddir')
+                    if download_dir:
+                        self.log(f"[Hydra+: ALBUM] ✓ Found download directory (config.sections): {download_dir}")
+                        return download_dir
+
+                # Try legacy config format
+                if hasattr(config, 'data') and 'transfers' in config.data:
+                    download_dir = config.data['transfers'].get('downloaddir')
+                    if download_dir:
+                        self.log(f"[Hydra+: ALBUM] ✓ Found download directory (config.data): {download_dir}")
+                        return download_dir
+
+            # Method 2: Check core.downloads
+            if hasattr(self.core, 'downloads') and hasattr(self.core.downloads, 'download_folder'):
+                download_dir = self.core.downloads.download_folder
+                if download_dir:
+                    self.log(f"[Hydra+: ALBUM] ✓ Found download directory (core.downloads): {download_dir}")
+                    return download_dir
+
+            self.log(f"[Hydra+: ALBUM] ⚠ Could not find download directory in config")
             return None
+
         except Exception as e:
             self.log(f"[Hydra+: ALBUM] Error getting download directory: {e}")
+            import traceback
+            self.log(f"[Hydra+: ALBUM] Traceback: {traceback.format_exc()}")
             return None
 
     def _ensure_album_folder(self, search_info, download_dir):
