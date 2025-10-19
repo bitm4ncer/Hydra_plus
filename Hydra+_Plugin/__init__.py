@@ -1209,6 +1209,20 @@ class Plugin(BasePlugin):
             search_info['current_track_index'] = 0
 
             self.log(f"[Hydra+: ALBUM] ✓ Matched {len(tracks_to_download)}/{len(search_info['tracks'])} tracks")
+
+            # CRITICAL: Create album folder FIRST (before any downloads)
+            # This prevents orphaned files if server crashes during processing
+            download_dir = self._get_download_directory(tracks_to_download[0])
+            if download_dir:
+                album_folder = self._ensure_album_folder(search_info, download_dir)
+                if album_folder:
+                    search_info['album_folder_path'] = album_folder
+                    self.log(f"[Hydra+: ALBUM] ✓ Album folder ready: {os.path.basename(album_folder)}")
+                else:
+                    self.log(f"[Hydra+: ALBUM] ⚠ Could not create album folder, continuing anyway...")
+            else:
+                self.log(f"[Hydra+: ALBUM] ⚠ Could not determine download directory")
+
             self.log(f"[Hydra+: ALBUM] Starting track 1/{len(tracks_to_download)}...")
 
             # ALBUM-LEVEL PREFETCH: Fetch album metadata ONCE (year, cover art)
@@ -1225,6 +1239,76 @@ class Plugin(BasePlugin):
             import traceback
             self.log(f"[Hydra+: ALBUM] Traceback: {traceback.format_exc()}")
             del self.active_searches[token]
+
+    def _get_download_directory(self, track_to_download):
+        """Get download directory from the first track's file path."""
+        try:
+            import os
+            file_path = track_to_download.get('file_path', '')
+            if file_path:
+                # The file_path is a virtual path like: @@user@@/path/to/file.mp3
+                # We need to figure out where Nicotine+ will save it locally
+                # Try to get downloads folder from Nicotine+ settings
+                if hasattr(self.core, 'downloads') and hasattr(self.core.downloads, 'download_folder'):
+                    return self.core.downloads.download_folder
+                # Fallback: Try to get from config
+                if hasattr(self.core, 'config') and hasattr(self.core.config.sections, 'transfers'):
+                    return self.core.config.sections['transfers']['downloaddir']
+            return None
+        except Exception as e:
+            self.log(f"[Hydra+: ALBUM] Error getting download directory: {e}")
+            return None
+
+    def _ensure_album_folder(self, search_info, download_dir):
+        """Create album folder before downloads start (crash-resistant)."""
+        try:
+            from urllib.request import urlopen, Request
+            from urllib.error import URLError
+            import json
+
+            album_artist = search_info.get('album_artist', '')
+            album_name = search_info.get('album_name', '')
+            year = search_info.get('year', '')
+
+            if not album_artist or not album_name:
+                self.log(f"[Hydra+: ALBUM] Missing album_artist or album_name")
+                return None
+
+            self.log(f"[Hydra+: ALBUM] Creating album folder: {album_artist} - {album_name}")
+
+            # Send request to bridge server to create folder
+            payload = {
+                'album_artist': album_artist,
+                'album_name': album_name,
+                'year': year,
+                'download_dir': download_dir
+            }
+
+            url = f"{self.settings['bridge_url']}/ensure-album-folder"
+            req = Request(url,
+                         data=json.dumps(payload).encode('utf-8'),
+                         headers={'Content-Type': 'application/json'})
+
+            with urlopen(req, timeout=10) as response:
+                result = json.loads(response.read().decode('utf-8'))
+
+                if result.get('success'):
+                    folder_path = result.get('folder_path', '')
+                    self.log(f"[Hydra+: ALBUM] ✓ Folder created: {result.get('folder_name', '')}")
+                    return folder_path
+                else:
+                    error = result.get('error', 'Unknown error')
+                    self.log(f"[Hydra+: ALBUM] ✗ Failed to create folder: {error}")
+                    return None
+
+        except URLError as e:
+            self.log(f"[Hydra+: ALBUM] ✗ Cannot reach bridge server: {e}")
+            return None
+        except Exception as e:
+            self.log(f"[Hydra+: ALBUM] Error creating album folder: {e}")
+            import traceback
+            self.log(f"[Hydra+: ALBUM] Traceback: {traceback.format_exc()}")
+            return None
 
     def _match_album_tracks(self, search_info, best_folder):
         """
@@ -1567,27 +1651,27 @@ class Plugin(BasePlugin):
             self.log(f"[Hydra+: META] {traceback.format_exc()}")
 
     def _finalize_album_download(self, token, search_info):
-        """Finalize album download - process metadata and organize files into album folder."""
+        """
+        Finalize album download.
+        CRITICAL: No batch processing anymore - each track was processed immediately after download.
+        """
         try:
-            downloaded_tracks = search_info.get('downloaded_tracks', [])
+            tracks_to_download = search_info.get('tracks_to_download', [])
+            current_index = search_info.get('current_track_index', 0)
 
-            if not downloaded_tracks:
-                self.log(f"[Hydra+: ALBUM] ✗ No tracks were downloaded")
-                del self.active_searches[token]
-                return
+            # Calculate how many tracks we actually downloaded
+            downloaded_count = current_index  # current_index is incremented after each download
 
-            self.log(f"[Hydra+: ALBUM] ✓ Album complete: {len(downloaded_tracks)}/{len(search_info['tracks'])} tracks downloaded")
+            self.log(f"[Hydra+: ALBUM] ✓ Album download complete!")
+            self.log(f"[Hydra+: ALBUM] Downloaded: {downloaded_count}/{len(tracks_to_download)} tracks")
+            self.log(f"[Hydra+: ALBUM] All tracks were processed immediately (no batch processing)")
 
-            # Process metadata one-at-a-time with delays to prevent server overload
-            self.log(f"[Hydra+: ALBUM] Starting sequential metadata processing...")
-            from threading import Thread
-            metadata_thread = Thread(
-                target=self._process_album_metadata_and_organize,
-                args=(downloaded_tracks, search_info),
-                daemon=True
-            )
-            metadata_thread.start()
-            self.log(f"[Hydra+: ALBUM] Metadata processing running in background...")
+            # Check if album folder was created
+            album_folder = search_info.get('album_folder_path')
+            if album_folder:
+                import os
+                self.log(f"[Hydra+: ALBUM] Location: {album_folder}")
+                self.log(f"[Hydra+: ALBUM] Folder: {os.path.basename(album_folder)}")
 
             # Clean up
             del self.active_searches[token]
@@ -1721,7 +1805,10 @@ class Plugin(BasePlugin):
         del self.active_searches[token]
 
     def _handle_album_track_completion(self, token, search_info, virtual_path, real_path):
-        """Handle completion of an album track download."""
+        """
+        Handle completion of an album track download.
+        CRITICAL: Process metadata and move to folder IMMEDIATELY (not batched)
+        """
         current_index = search_info['current_track_index']
         tracks_to_download = search_info['tracks_to_download']
 
@@ -1729,17 +1816,18 @@ class Plugin(BasePlugin):
             current_track = tracks_to_download[current_index]
             track_info = current_track['track_info']
 
-            self.log(f"[Hydra+: ALBUM] ✓ Track {current_index + 1}/{len(tracks_to_download)} complete: {track_info['track']}")
+            self.log(f"[Hydra+: ALBUM] ✓ Track {current_index + 1}/{len(tracks_to_download)} downloaded: {track_info['track']}")
 
-            # Initialize downloaded_tracks list if needed
-            if 'downloaded_tracks' not in search_info:
-                search_info['downloaded_tracks'] = []
-
-            # Store track info for processing (will be processed one-at-a-time with delays)
-            search_info['downloaded_tracks'].append({
-                'file_path': real_path,
-                'track_info': track_info
-            })
+            # CRITICAL CHANGE: Process metadata and move to folder IMMEDIATELY
+            # Don't wait for all downloads to complete - process each track right away
+            # This prevents batch processing pile-up that causes server crashes
+            from threading import Thread
+            thread = Thread(
+                target=self._process_track_immediately,
+                args=(real_path, track_info, token, current_index, search_info),
+                daemon=True
+            )
+            thread.start()
 
         # Clean up download tracking
         del self.active_downloads[virtual_path]
@@ -1747,6 +1835,55 @@ class Plugin(BasePlugin):
         # Move to next track
         search_info['current_track_index'] += 1
         self._download_next_album_track(token, search_info)
+
+    def _process_track_immediately(self, real_path, track_info, token, track_index, search_info):
+        """
+        Process a single track immediately after download (not batched).
+        CRITICAL: This is the new approach that prevents batch processing pile-up.
+        """
+        try:
+            import time
+            import os
+
+            # Wait a moment for file to be fully written
+            time.sleep(1)
+
+            # Verify file exists
+            if not os.path.exists(real_path):
+                self.log(f"[Hydra+: ALBUM] ✗ File not found: {real_path}")
+                return
+
+            # Check if file is MP3 or FLAC
+            file_lower = real_path.lower()
+            if not (file_lower.endswith('.mp3') or file_lower.endswith('.flac')):
+                self.log(f"[Hydra+: ALBUM] ⚠ Unsupported format, skipping metadata: {real_path}")
+                return
+
+            # Get album folder path (created upfront)
+            album_folder_path = search_info.get('album_folder_path')
+            if not album_folder_path:
+                self.log(f"[Hydra+: ALBUM] ⚠ No album folder path, processing without move")
+
+            self.log(f"[Hydra+: ALBUM] Processing track {track_index + 1} metadata...")
+
+            # Process metadata with album folder as target (will rename AND move)
+            success, new_path = self._process_single_track_metadata(
+                real_path,
+                track_info,
+                token,
+                track_index,
+                target_folder=album_folder_path
+            )
+
+            if success:
+                self.log(f"[Hydra+: ALBUM] ✓ Track {track_index + 1} complete: {os.path.basename(new_path)}")
+            else:
+                self.log(f"[Hydra+: ALBUM] ✗ Track {track_index + 1} failed metadata processing")
+
+        except Exception as e:
+            self.log(f"[Hydra+: ALBUM] ✗ Error processing track {track_index + 1} immediately: {e}")
+            import traceback
+            self.log(f"[Hydra+: ALBUM] Traceback: {traceback.format_exc()}")
 
     def _process_album_metadata_batch_safe(self, downloaded_tracks, search_info):
         """
@@ -1822,21 +1959,23 @@ class Plugin(BasePlugin):
             if keys_to_remove:
                 self.log(f"[Hydra+: ALBUM-META] Cleaned up {len(keys_to_remove)} cached metadata entries")
 
-    def _process_single_track_metadata(self, file_path, track_info, token=None, track_index=None):
+    def _process_single_track_metadata(self, file_path, track_info, token=None, track_index=None, target_folder=None):
         """
         Process metadata for a single track.
         IMPROVED: Uses prefetched metadata cache to skip Spotify page fetch, dramatically reducing processing time.
+        CRITICAL: Now supports target_folder to move file immediately after processing.
 
         Args:
             file_path: Path to the downloaded file
             track_info: Track metadata dict
             token: Search token (optional, for cache lookup)
             track_index: Track index in album (optional, for cache lookup)
+            target_folder: Target folder to move file to after processing (optional, for album downloads)
 
         Returns:
             Tuple of (success: bool, new_path: str)
             - success: True if processing succeeded, False otherwise
-            - new_path: The renamed file path if renamed, otherwise original path
+            - new_path: The renamed/moved file path if successful, otherwise original path
         """
         try:
             from urllib.request import urlopen, Request
@@ -1878,6 +2017,10 @@ class Plugin(BasePlugin):
             if album_metadata:
                 payload['prefetched_year'] = album_metadata.get('year', '')
                 payload['prefetched_image_url'] = album_metadata.get('image_url', '')
+
+            # Add target folder if specified (server will move file after processing)
+            if target_folder:
+                payload['target_folder'] = target_folder
 
             # Send to Node server with REDUCED timeout (server responds immediately now)
             url = f"{self.settings['bridge_url']}/process-metadata"

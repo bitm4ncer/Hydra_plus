@@ -514,6 +514,28 @@ const server = http.createServer((req, res) => {
     return;
   }
 
+  // Handle POST to /ensure-album-folder - Create album folder (upfront, before downloads)
+  if (req.method === 'POST' && req.url === '/ensure-album-folder') {
+    let body = '';
+
+    req.on('data', chunk => {
+      body += chunk.toString();
+    });
+
+    req.on('end', async () => {
+      try {
+        const data = JSON.parse(body);
+        await ensureAlbumFolder(data, res);
+      } catch (error) {
+        console.error('[Hydra+: FOLDER] ✗ Error:', error);
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: false, error: 'Invalid JSON' }));
+      }
+    });
+
+    return;
+  }
+
   // Handle POST to /create-album-folder - Create album folder and move files
   if (req.method === 'POST' && req.url === '/create-album-folder') {
     let body = '';
@@ -1008,7 +1030,7 @@ async function downloadCoverArt(imageUrl) {
 
 // Main metadata processing function
 async function processMetadata(data, res) {
-  const { file_path, artist, track, album, track_id, prefetched_year, prefetched_image_url } = data;
+  const { file_path, artist, track, album, track_id, prefetched_year, prefetched_image_url, target_folder } = data;
 
   console.log(`[Hydra+: META] >> PROCESSING << ${path.basename(file_path)}`);
 
@@ -1017,6 +1039,7 @@ async function processMetadata(data, res) {
     original_path: file_path,
     new_path: file_path,
     renamed: false,
+    moved_to_folder: false,
     tags_updated: false,
     cover_embedded: false,
     year: null,
@@ -1044,11 +1067,50 @@ async function processMetadata(data, res) {
 
     // STEP 1: RENAME FILE FIRST (before any network operations that could timeout)
     const trackNum = data.track_number || 0;
-    const newPath = await renameFile(file_path, artist, track, trackNum);
+    let newPath = await renameFile(file_path, artist, track, trackNum);
     result.new_path = newPath;
     result.renamed = (newPath !== file_path);
 
-    // CRITICAL FIX: Always send success response immediately after renaming
+    // STEP 2: MOVE TO TARGET FOLDER if specified (for album downloads)
+    // CRITICAL: Move immediately after rename to prevent orphaned files on crash
+    if (target_folder) {
+      try {
+        if (!fs.existsSync(target_folder)) {
+          throw new Error(`Target folder does not exist: ${target_folder}`);
+        }
+
+        const fileName = path.basename(newPath);
+        const targetPath = path.join(target_folder, fileName);
+
+        // Only move if not already in target folder
+        if (targetPath !== newPath) {
+          // Handle duplicates
+          let finalPath = targetPath;
+          let counter = 1;
+          while (fs.existsSync(finalPath) && finalPath !== newPath) {
+            const ext = path.extname(fileName);
+            const base = path.basename(fileName, ext);
+            finalPath = path.join(target_folder, `${base} (${counter})${ext}`);
+            counter++;
+          }
+
+          await fsPromises.rename(newPath, finalPath);
+          console.log(`[Hydra+: META] ✓ Moved to album folder: ${path.basename(target_folder)}`);
+          newPath = finalPath;
+          result.new_path = finalPath;
+          result.moved_to_folder = true;
+        } else {
+          console.log(`[Hydra+: META] Already in target folder`);
+          result.moved_to_folder = true;
+        }
+      } catch (moveError) {
+        console.error(`[Hydra+: META] ⚠ Failed to move to folder: ${moveError.message}`);
+        // Don't fail the whole operation if move fails - file is still renamed
+        result.moved_to_folder = false;
+      }
+    }
+
+    // CRITICAL FIX: Always send success response immediately after renaming/moving
     // This prevents Python plugin timeout issues, especially for album batches
     if (!res.headersSent) {
       res.writeHead(200, { 'Content-Type': 'application/json' });
@@ -1280,6 +1342,60 @@ async function processMetadata(data, res) {
 }
 
 // Create album folder and move files
+/**
+ * Ensure album folder exists (called upfront before downloads start)
+ * CRITICAL: Creates folder FIRST to prevent crashes from leaving orphaned files
+ */
+async function ensureAlbumFolder(data, res) {
+  const { album_artist, album_name, year, download_dir } = data;
+
+  console.log(`[Hydra+: FOLDER] >> ENSURE EXISTS << ${album_artist} - ${album_name}`);
+
+  const result = {
+    success: true,
+    folder_path: null,
+    folder_name: null
+  };
+
+  try {
+    // Validate input
+    if (!album_artist || !album_name || !download_dir) {
+      throw new Error('Missing required fields: album_artist, album_name, or download_dir');
+    }
+
+    // Verify download directory exists
+    if (!fs.existsSync(download_dir)) {
+      throw new Error(`Download directory not found: ${download_dir}`);
+    }
+
+    // Create album folder name: "Artist - Album (Year)"
+    const artistClean = sanitizeFilename(album_artist);
+    const albumClean = sanitizeFilename(album_name);
+    const yearPart = year ? ` (${year})` : '';
+    const albumFolderName = `${artistClean} - ${albumClean}${yearPart}`;
+    const albumFolderPath = path.join(download_dir, albumFolderName);
+
+    // Create album folder if it doesn't exist
+    if (!fs.existsSync(albumFolderPath)) {
+      await fsPromises.mkdir(albumFolderPath, { recursive: true });
+      console.log(`[Hydra+: FOLDER] ✓ Created → ${albumFolderName}`);
+    } else {
+      console.log(`[Hydra+: FOLDER] Already exists: ${albumFolderName}`);
+    }
+
+    result.folder_path = albumFolderPath;
+    result.folder_name = albumFolderName;
+
+  } catch (error) {
+    console.error(`[Hydra+: FOLDER] ✗ Error: ${error.message}`);
+    result.success = false;
+    result.error = error.message;
+  }
+
+  res.writeHead(result.success ? 200 : 500, { 'Content-Type': 'application/json' });
+  res.end(JSON.stringify(result));
+}
+
 async function createAlbumFolder(data, res) {
   const { album_artist, album_name, year, track_files } = data;
 
