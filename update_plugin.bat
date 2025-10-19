@@ -59,9 +59,37 @@ if not exist "%NICOTINE_PLUGINS%" (
     exit /b 1
 )
 
+REM Kill bridge server process if running (to release file locks and clear cache)
+echo  Checking for running bridge server...
+tasklist /FI "IMAGENAME eq node.exe" 2>NUL | find /I /N "node.exe">NUL
+if "%ERRORLEVEL%"=="0" (
+    echo  Stopping bridge server processes...
+    for /f "tokens=2" %%a in ('tasklist /FI "IMAGENAME eq node.exe" /FO LIST ^| findstr /I "PID:"') do (
+        REM Check if this is the bridge server by checking command line
+        wmic process where "ProcessId=%%a" get Commandline 2>nul | findstr /I "bridge-server.js" >nul
+        if !errorlevel! equ 0 (
+            echo  Terminating bridge server process %%a...
+            taskkill /PID %%a /F >nul 2>&1
+        )
+    )
+    echo  Bridge server stopped.
+    timeout /t 2 /nobreak >nul
+) else (
+    echo  No bridge server running.
+)
+
+echo.
 echo  Removing old plugin installation...
 if exist "%PLUGIN_DEST%" (
     rmdir /s /q "%PLUGIN_DEST%" 2>nul
+    if exist "%PLUGIN_DEST%" (
+        color 0C
+        echo  ERROR: Could not remove old files ^(may be locked^)
+        echo  Try closing Nicotine+ and running this script again.
+        echo.
+        pause
+        exit /b 1
+    )
     echo  Old files removed.
 ) else (
     echo  No previous installation found.
@@ -75,6 +103,15 @@ mkdir "%PLUGIN_DEST%" 2>nul
 mkdir "%PLUGIN_DEST%\Server" 2>nul
 xcopy /E /I /Y "%SCRIPT_DIR%Hydra+_Plugin" "%PLUGIN_DEST%" >nul 2>&1
 
+echo.
+echo  Clearing Node.js module cache...
+if exist "%PLUGIN_DEST%\Server\node_modules" (
+    rmdir /s /q "%PLUGIN_DEST%\Server\node_modules" >nul 2>&1
+    echo  Node modules cache cleared ^(will be reinstalled on next start^).
+) else (
+    echo  No node_modules cache found.
+)
+
 if %errorlevel% equ 0 (
     color 0A
     cls
@@ -85,13 +122,41 @@ if %errorlevel% equ 0 (
     echo.
     echo  Location: %PLUGIN_DEST%
     echo.
-    echo  ========================================================================
-    echo   NEXT STEPS:
-    echo  ========================================================================
-    echo.
-    echo  1. Restart Nicotine+ to load the updated plugin
-    echo  2. Re-enable the plugin in Settings ^> Plugins if needed
-    echo  3. The bridge server will start automatically when enabled
+
+    REM Check if Nicotine+ is running and offer to restart it
+    tasklist /FI "IMAGENAME eq nicotine.exe" 2>NUL | find /I /N "nicotine.exe">NUL
+    if "%ERRORLEVEL%"=="0" (
+        echo  ========================================================================
+        echo   NICOTINE+ IS RUNNING
+        echo  ========================================================================
+        echo.
+        echo  For changes to take effect, Nicotine+ needs to be restarted.
+        echo.
+        echo  Options:
+        echo   [Y] - Close Nicotine+ now ^(you'll need to restart it manually^)
+        echo   [N] - Keep Nicotine+ running ^(restart manually later^)
+        echo.
+        set /p RESTART_CHOICE="  Your choice [Y/N]: "
+
+        if /i "!RESTART_CHOICE!"=="Y" (
+            echo.
+            echo  Closing Nicotine+...
+            taskkill /IM nicotine.exe /F >nul 2>&1
+            timeout /t 2 /nobreak >nul
+            echo  Nicotine+ closed. Please restart it manually to load the updated plugin.
+        ) else (
+            echo.
+            echo  Nicotine+ left running. Remember to restart it to load the updated plugin.
+        )
+    ) else (
+        echo  ========================================================================
+        echo   NEXT STEPS:
+        echo  ========================================================================
+        echo.
+        echo  1. Start Nicotine+ to load the updated plugin
+        echo  2. Enable the plugin in Settings ^> Plugins if needed
+        echo  3. The bridge server will start automatically when enabled
+    )
     echo.
 ) else (
     color 0C

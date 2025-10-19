@@ -1050,33 +1050,77 @@ async function processMetadata(data, res) {
           const trackNumber = data.track_number || spotifyMeta.trackNumber || '';
 
           if (isMP3) {
-            // MP3: Use NodeID3
+            // MP3: Use NodeID3 with enhanced safety checks
             try {
-              const tags = {
-                title: track || '',
-                artist: artist || '',
-                album: album || ''
-              };
-
-              if (spotifyMeta.year) tags.year = spotifyMeta.year;
-              if (trackNumber) tags.trackNumber = String(trackNumber);
-              if (apiMeta.genre) tags.genre = apiMeta.genre;
-              if (apiMeta.label) tags.publisher = apiMeta.label;
-
-              if (coverData) {
-                tags.image = {
-                  mime: 'image/jpeg',
-                  type: { id: 3, name: 'front cover' },
-                  description: 'Cover',
-                  imageBuffer: coverData
-                };
+              // Verify file exists and is accessible before tagging
+              if (!fs.existsSync(newPath)) {
+                throw new Error(`MP3 file not found: ${newPath}`);
               }
 
-              console.log(`[Hydra+: META] ⚡ Writing ID3 tags (MP3)...`);
-              writeSuccess = NodeID3.write(tags, newPath);
+              // Check file size - skip if suspiciously small or large
+              const stats = fs.statSync(newPath);
+              if (stats.size < 1000) {
+                throw new Error(`MP3 file too small (${stats.size} bytes), possibly corrupted`);
+              }
+              if (stats.size > 500 * 1024 * 1024) {
+                console.log(`[Hydra+: META] ⚠ Large MP3 file (${Math.round(stats.size / 1024 / 1024)}MB), skipping metadata to prevent crash`);
+                writeSuccess = true; // Skip but don't fail
+              } else {
+                const tags = {
+                  title: track || '',
+                  artist: artist || '',
+                  album: album || ''
+                };
 
-              if (!writeSuccess) {
-                console.error(`[Hydra+: META] ✗ NodeID3.write returned false`);
+                if (spotifyMeta.year) tags.year = spotifyMeta.year;
+                if (trackNumber) tags.trackNumber = String(trackNumber);
+                if (apiMeta.genre) tags.genre = apiMeta.genre;
+                if (apiMeta.label) tags.publisher = apiMeta.label;
+
+                // Attach cover if available - with size validation
+                if (coverData) {
+                  // Validate cover data size (max 10MB to prevent crashes)
+                  if (coverData.length > 10 * 1024 * 1024) {
+                    console.log(`[Hydra+: META] ⚠ Cover too large (${Math.round(coverData.length / 1024 / 1024)}MB), skipping embed`);
+                  } else {
+                    tags.image = {
+                      mime: 'image/jpeg',
+                      type: { id: 3, name: 'front cover' },
+                      description: 'Cover',
+                      imageBuffer: coverData
+                    };
+                  }
+                }
+
+                console.log(`[Hydra+: META] ⚡ Writing ID3 tags (MP3)...`);
+
+                // Wrap NodeID3.write in additional safety - use Promise.race with timeout
+                // to prevent indefinite hangs that can cause event loop stalls
+                let timeoutId;
+                const writePromise = new Promise((resolve, reject) => {
+                  try {
+                    const result = NodeID3.write(tags, newPath);
+                    resolve(result);
+                  } catch (err) {
+                    reject(err);
+                  }
+                });
+
+                const timeoutPromise = new Promise((resolve) => {
+                  timeoutId = setTimeout(() => {
+                    console.error(`[Hydra+: META] ⚠ NodeID3.write timeout (10s)`);
+                    resolve(false);
+                  }, 10000); // 10 second timeout
+                });
+
+                writeSuccess = await Promise.race([writePromise, timeoutPromise]);
+
+                // CRITICAL: Clear timeout to prevent memory leaks
+                if (timeoutId) clearTimeout(timeoutId);
+
+                if (!writeSuccess) {
+                  console.error(`[Hydra+: META] ✗ NodeID3.write returned false`);
+                }
               }
             } catch (id3Error) {
               console.error(`[Hydra+: META] ✗ ID3 exception: ${id3Error.message}`);

@@ -1911,21 +1911,63 @@ class Plugin(BasePlugin):
                 if not download_started_transferring:
                     self.log(f"[Hydra+: ALBUM] ⚠ First track not transferring after 15s")
 
-                    # Remove from tracking
-                    if virtual_path in self.active_downloads:
-                        del self.active_downloads[virtual_path]
+                    # Remove all queued tracks from the current folder attempt
+                    # This prevents orphaned downloads in the queue when switching folders
+                    if hasattr(self.core, 'downloads') and hasattr(self.core.downloads, 'transfers'):
+                        transfers_to_remove = []
 
-                    # Try to abort the stuck download
-                    if download_found and hasattr(self.core, 'downloads') and hasattr(self.core.downloads, 'transfers'):
-                        for transfer in self.core.downloads.transfers.values():
-                            if hasattr(transfer, 'virtual_path') and transfer.virtual_path == virtual_path:
-                                if hasattr(self.core.downloads, 'abort_transfer'):
+                        # Find all tracks from this album in the download queue
+                        for track in tracks_to_download:
+                            track_path = track['file_path']
+
+                            # Find matching transfer
+                            for transfer in self.core.downloads.transfers.values():
+                                if hasattr(transfer, 'virtual_path') and transfer.virtual_path == track_path:
+                                    transfers_to_remove.append(transfer)
+                                    break
+
+                        # Remove all found transfers using the hierarchical abort approach
+                        if transfers_to_remove:
+                            self.log(f"[Hydra+: ALBUM] Removing {len(transfers_to_remove)} queued track(s) from previous folder")
+
+                            # Try clear_downloads FIRST (removes from UI)
+                            cleared = False
+                            if hasattr(self.core.downloads, 'clear_downloads'):
+                                try:
+                                    self.core.downloads.clear_downloads(transfers_to_remove)
+                                    self.log(f"[Hydra+: ALBUM] ✓ Cleared {len(transfers_to_remove)} transfer(s) from queue")
+                                    cleared = True
+                                except Exception as e:
+                                    self.log(f"[Hydra+: ALBUM] ✗ clear_downloads failed: {e}")
+
+                            # Fallback to abort_downloads if clear didn't work
+                            if not cleared:
+                                if hasattr(self.core.downloads, 'abort_downloads'):
                                     try:
-                                        self.core.downloads.abort_transfer(transfer)
-                                        self.log(f"[Hydra+: ALBUM] Aborted stuck download")
-                                    except:
-                                        pass
-                                break
+                                        self.core.downloads.abort_downloads(transfers_to_remove)
+                                        self.log(f"[Hydra+: ALBUM] ✓ Aborted {len(transfers_to_remove)} transfer(s)")
+                                    except Exception as e:
+                                        self.log(f"[Hydra+: ALBUM] ✗ abort_downloads failed: {e}")
+                                        # Try abort_transfer individually as last resort
+                                        if hasattr(self.core.downloads, 'abort_transfer'):
+                                            for transfer in transfers_to_remove:
+                                                try:
+                                                    self.core.downloads.abort_transfer(transfer)
+                                                except:
+                                                    pass
+                                elif hasattr(self.core.downloads, 'abort_transfer'):
+                                    # Abort each transfer individually
+                                    for transfer in transfers_to_remove:
+                                        try:
+                                            self.core.downloads.abort_transfer(transfer)
+                                        except:
+                                            pass
+
+                        # Remove all tracks from tracking
+                        for track in tracks_to_download:
+                            track_path = track['file_path']
+                            if track_path in self.active_downloads:
+                                del self.active_downloads[track_path]
 
                     # Try next best folder
                     folder_candidates = search_info.get('folder_candidates', [])
@@ -2010,16 +2052,42 @@ class Plugin(BasePlugin):
                 elif not download_started_transferring:
                     should_skip = True
                     skip_reason = "Download stuck in queue (not transferring)"
-                    # Try to abort the stuck download
-                    if transfer_obj and hasattr(self.core.downloads, 'abort_transfer'):
-                        try:
-                            self.core.downloads.abort_transfer(transfer_obj)
-                        except:
-                            pass
 
                 if should_skip:
                     self.log(f"[Hydra+: ALBUM] ⚠ Track {current_index + 1}: {skip_reason} (after 90s)")
                     self.log(f"[Hydra+: ALBUM] Skipping to next track...")
+
+                    # Remove stuck download from queue using hierarchical abort approach
+                    if transfer_obj:
+                        # Try clear_downloads FIRST (removes from UI)
+                        cleared = False
+                        if hasattr(self.core.downloads, 'clear_downloads'):
+                            try:
+                                self.core.downloads.clear_downloads([transfer_obj])
+                                self.log(f"[Hydra+: ALBUM] ✓ Cleared stuck track from queue")
+                                cleared = True
+                            except Exception as e:
+                                self.log(f"[Hydra+: ALBUM] ✗ clear_downloads failed: {e}")
+
+                        # Fallback to abort_downloads if clear didn't work
+                        if not cleared:
+                            if hasattr(self.core.downloads, 'abort_downloads'):
+                                try:
+                                    self.core.downloads.abort_downloads([transfer_obj])
+                                    self.log(f"[Hydra+: ALBUM] ✓ Aborted stuck track")
+                                except Exception as e:
+                                    self.log(f"[Hydra+: ALBUM] ✗ abort_downloads failed: {e}")
+                                    # Try abort_transfer as last resort
+                                    if hasattr(self.core.downloads, 'abort_transfer'):
+                                        try:
+                                            self.core.downloads.abort_transfer(transfer_obj)
+                                        except:
+                                            pass
+                            elif hasattr(self.core.downloads, 'abort_transfer'):
+                                try:
+                                    self.core.downloads.abort_transfer(transfer_obj)
+                                except:
+                                    pass
 
                     # Remove from tracking
                     if virtual_path in self.active_downloads:
