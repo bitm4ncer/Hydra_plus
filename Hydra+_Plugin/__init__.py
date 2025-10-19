@@ -5,10 +5,10 @@ Multi-headed Spotify → Soulseek bridge with intelligent auto-download.
 Connects to the bridge server to receive track searches from the browser
 extension and automatically triggers searches in Nicotine+.
 
-Version: 0.1.2
+Version: 0.1.4
 """
 
-__version__ = "0.1.2"
+__version__ = "0.1.4"
 
 from pynicotine.pluginsystem import BasePlugin
 from pynicotine.events import events
@@ -233,13 +233,13 @@ class Plugin(BasePlugin):
 
         # Eye-catching startup banner
         self.log("═══════════════════════════════════════════════════════════")
-        self.log("  >> /////////////////////  Hydra+  /////////////////////  INITIALIZED <<")
+        self.log("  >> /////////////////////  Hydra+ /////////////////////  <<")
         self.log("═══════════════════════════════════════════════════════════")
         self.log(f"  [BRIDGE]    → {bridge_url}")
         self.log(f"  [POLLING]   → Every {poll_interval}s")
         self.log(f"  [VERSION]   → v{__version__}")
         self.log("═══════════════════════════════════════════════════════════")
-        self.log("  🐍 Multi-headed auto-download beast awakened!")
+        self.log("  🐍 Multi-headed beast awakened!")
         self.log("═══════════════════════════════════════════════════════════")
         self.log("[Hydra+] Waiting for Nicotine+ to connect to the network...")
 
@@ -922,41 +922,68 @@ class Plugin(BasePlugin):
             self.log(f"[Hydra+: DL] Attempting to abort: {virtual_path}")
             self.log(f"[Hydra+: DL] Username: {username}")
 
-            # Abort the download in Nicotine+ to remove it from queue
-            if hasattr(self.core, 'downloads') and hasattr(self.core.downloads, 'abort_downloads') and username:
-                try:
-                    # Use abort_downloads which works for both queued and active downloads
-                    self.log(f"[Hydra+: DL] Calling abort_downloads for user: {username}")
-                    self.core.downloads.abort_downloads([(username, virtual_path)])
-                    self.log(f"[Hydra+: DL] ✓ Aborted download via abort_downloads")
-                except Exception as e:
-                    self.log(f"[Hydra+: DL] ✗ abort_downloads failed: {e}")
-                    import traceback
-                    self.log(f"[Hydra+: DL] {traceback.format_exc()}")
+            # Find the transfer object and try to abort it
+            transfer_to_abort = None
+            if hasattr(self.core, 'downloads') and hasattr(self.core.downloads, 'transfers'):
+                transfer_count = len(self.core.downloads.transfers)
+                self.log(f"[Hydra+: DL] Checking {transfer_count} transfers...")
 
-                    # Fallback: try abort_transfer if abort_downloads failed
-                    if hasattr(self.core.downloads, 'transfers'):
-                        transfer_count = len(self.core.downloads.transfers)
-                        self.log(f"[Hydra+: DL] Fallback: checking {transfer_count} active transfers...")
+                for transfer in self.core.downloads.transfers.values():
+                    if hasattr(transfer, 'virtual_path') and transfer.virtual_path == virtual_path:
+                        transfer_to_abort = transfer
+                        self.log(f"[Hydra+: DL] Found transfer in queue")
+                        break
 
-                        for transfer in self.core.downloads.transfers.values():
-                            if hasattr(transfer, 'virtual_path') and transfer.virtual_path == virtual_path:
-                                self.log(f"[Hydra+: DL] Found transfer, attempting abort_transfer...")
+                if transfer_to_abort:
+                    # Try clear_downloads FIRST (before aborting, while transfer is still valid)
+                    # If this works, we don't need to abort since it's already removed
+                    cleared = False
+                    if hasattr(self.core.downloads, 'clear_downloads'):
+                        try:
+                            self.log(f"[Hydra+: DL] Calling clear_downloads to remove from UI...")
+                            self.core.downloads.clear_downloads([transfer_to_abort])
+                            self.log(f"[Hydra+: DL] ✓ Called clear_downloads successfully")
+                            cleared = True
+                        except Exception as e:
+                            self.log(f"[Hydra+: DL] ✗ clear_downloads failed: {e}")
+                            import traceback
+                            self.log(f"[Hydra+: DL] {traceback.format_exc()}")
+
+                    # Only try abort if clear failed or isn't available
+                    if not cleared:
+                        if hasattr(self.core.downloads, 'abort_downloads'):
+                            try:
+                                self.log(f"[Hydra+: DL] Calling abort_downloads with Transfer object...")
+                                self.core.downloads.abort_downloads([transfer_to_abort])
+                                self.log(f"[Hydra+: DL] ✓ Called abort_downloads successfully")
+                            except Exception as e:
+                                self.log(f"[Hydra+: DL] ✗ abort_downloads failed: {e}")
+                                # Try abort_transfer as last resort
                                 if hasattr(self.core.downloads, 'abort_transfer'):
                                     try:
-                                        self.core.downloads.abort_transfer(transfer)
-                                        self.log(f"[Hydra+: DL] ✓ Aborted via abort_transfer")
+                                        self.log(f"[Hydra+: DL] Trying abort_transfer instead...")
+                                        self.core.downloads.abort_transfer(transfer_to_abort)
+                                        self.log(f"[Hydra+: DL] ✓ Called abort_transfer successfully")
                                     except Exception as e2:
                                         self.log(f"[Hydra+: DL] ✗ abort_transfer also failed: {e2}")
-                                break
-            elif not username:
-                self.log(f"[Hydra+: DL] ✗ Cannot abort - username not available")
+                        elif hasattr(self.core.downloads, 'abort_transfer'):
+                            try:
+                                self.log(f"[Hydra+: DL] Calling abort_transfer...")
+                                self.core.downloads.abort_transfer(transfer_to_abort)
+                                self.log(f"[Hydra+: DL] ✓ Called abort_transfer successfully")
+                            except Exception as e:
+                                self.log(f"[Hydra+: DL] ✗ abort_transfer failed: {e}")
+
+                    # List available methods for debugging (only on first abort attempt)
+                    if not hasattr(self, '_abort_methods_logged'):
+                        methods = [m for m in dir(self.core.downloads) if not m.startswith('_') and ('abort' in m.lower() or 'clear' in m.lower() or 'remove' in m.lower() or 'cancel' in m.lower())]
+                        if methods:
+                            self.log(f"[Hydra+: DL] Available abort/clear/remove methods: {', '.join(methods)}")
+                        self._abort_methods_logged = True
+                else:
+                    self.log(f"[Hydra+: DL] Transfer not found in transfers dict (may have been removed)")
             else:
-                self.log(f"[Hydra+: DL] ✗ abort_downloads method not available")
-                # List available methods for debugging
-                if hasattr(self.core, 'downloads'):
-                    methods = [m for m in dir(self.core.downloads) if not m.startswith('_')]
-                    self.log(f"[Hydra+: DL] Available methods: {', '.join(methods[:10])}")
+                self.log(f"[Hydra+: DL] ✗ downloads.transfers not available")
 
             # Remove from tracking
             del self.active_downloads[virtual_path]

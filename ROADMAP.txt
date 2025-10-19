@@ -496,6 +496,179 @@
     • Install instructions to be added to README.txt
 
 ═══════════════════════════════════════════════════════════════════════════════
+  [5] SMART QUEUE DETECTION & UPLOAD METHOD FILTERING
+═══════════════════════════════════════════════════════════════════════════════
+
+  ┌─ PROBLEM ────────────────────────────────────────────────────────────────┐
+  │ Users often get stuck in long download queues with queue-based uploaders │
+  │ (no round-robin enabled). Downloads can take hours or never start if the │
+  │ uploader is offline. Meanwhile, users with round-robin enabled provide   │
+  │ immediate or near-immediate downloads.                                   │
+  │                                                                           │
+  │ Current ranking only considers file quality (bitrate, duration, size)    │
+  │ but ignores upload availability, leading to poor user experience.        │
+  └──────────────────────────────────────────────────────────────────────────┘
+
+  ┌─ SOLUTION ───────────────────────────────────────────────────────────────┐
+  │ Detect uploader's method (round-robin vs queue-based) using Nicotine+    │
+  │ user metadata and apply smart ranking penalties:                         │
+  │ • Capture freeulslots (free upload slots) from search results            │
+  │ • Capture inqueue (current queue size) from search results               │
+  │ • Penalize candidates with 0 free slots AND large queues (100+ people)   │
+  │ • Prioritize uploaders with available slots for instant downloads        │
+  │ • Configurable penalty severity in extension popup UI                    │
+  └──────────────────────────────────────────────────────────────────────────┘
+
+  ┌─ IMPLEMENTATION PLAN ────────────────────────────────────────────────────┐
+  │                                                                           │
+  │ STEP 1: Capture User Metadata in Search Results                          │
+  │ ────────────────────────────────────────────────────────────────────────│
+  │   • Modify _on_file_search_response() in __init__.py (line ~560)         │
+  │   • The msg object already contains metadata, currently unused:          │
+  │     - msg.freeulslots → Free upload slots (0 = will queue)               │
+  │     - msg.inqueue → Number of people in queue                            │
+  │     - msg.ulspeed → Upload speed (already captured for albums)           │
+  │   • Extract and store in file results loop:                              │
+  │     free_slots = msg.freeulslots if hasattr(msg, 'freeulslots') else -1  │
+  │     queue_size = msg.inqueue if hasattr(msg, 'inqueue') else -1          │
+  │     upload_speed = msg.ulspeed if hasattr(msg, 'ulspeed') else 0         │
+  │                                                                           │
+  │ STEP 2: Update Candidate Structure                                       │
+  │ ────────────────────────────────────────────────────────────────────────│
+  │   • Extend candidate dictionary (currently lines 635-641) to include:    │
+  │     candidate = {                                                         │
+  │         'file': file_name,                                               │
+  │         'user': username,                                                │
+  │         'score': score,                                                  │
+  │         'size': file_size,                                               │
+  │         'attrs': file_attrs,                                             │
+  │         'free_slots': free_slots,      # NEW                             │
+  │         'queue_size': queue_size,      # NEW                             │
+  │         'upload_speed': upload_speed   # NEW (for tracks too)            │
+  │     }                                                                     │
+  │   • Same update for album folder candidates (lines 732-738)              │
+  │                                                                           │
+  │ STEP 3: Implement Queue Detection Logic                                  │
+  │ ────────────────────────────────────────────────────────────────────────│
+  │   • Create new method _calculate_queue_penalty() in __init__.py:         │
+  │                                                                           │
+  │     def _calculate_queue_penalty(self, candidate, penalty_mode='medium'):│
+  │         """                                                               │
+  │         Calculate penalty for queue-based uploaders.                     │
+  │         Uses Option C: Combined free slots + queue size detection.       │
+  │         """                                                               │
+  │         free_slots = candidate.get('free_slots', -1)                     │
+  │         queue_size = candidate.get('queue_size', -1)                     │
+  │                                                                           │
+  │         # Unknown metadata = no penalty (benefit of doubt)               │
+  │         if free_slots < 0 or queue_size < 0:                             │
+  │             return 0                                                     │
+  │                                                                           │
+  │         # CASE 1: Has free slots = instant/fast download = bonus         │
+  │         if free_slots > 0:                                               │
+  │             return +50  # Reward instant availability                    │
+  │                                                                           │
+  │         # CASE 2: No slots but small queue (<10) = tolerable             │
+  │         if free_slots == 0 and queue_size < 10:                          │
+  │             return -20  # Light penalty                                  │
+  │                                                                           │
+  │         # CASE 3: No slots + medium queue (10-50) = concerning           │
+  │         if free_slots == 0 and queue_size < 50:                          │
+  │             penalty_map = {'light': -30, 'medium': -75, 'heavy': -150}   │
+  │             return penalty_map.get(penalty_mode, -75)                    │
+  │                                                                           │
+  │         # CASE 4: No slots + large queue (50+) = avoid                   │
+  │         if free_slots == 0 and queue_size >= 50:                         │
+  │             penalty_map = {'light': -50, 'medium': -100, 'heavy': -200}  │
+  │             return penalty_map.get(penalty_mode, -100)                   │
+  │                                                                           │
+  │         return 0                                                         │
+  │                                                                           │
+  │ STEP 4: Apply Queue Penalty to Scoring Algorithm                         │
+  │ ────────────────────────────────────────────────────────────────────────│
+  │   • Modify _calculate_file_score() method (lines 437-558):               │
+  │     - Add parameter: penalty_mode='medium'                               │
+  │     - After calculating base score, add:                                 │
+  │       queue_penalty = self._calculate_queue_penalty(                     │
+  │           candidate, penalty_mode                                        │
+  │       )                                                                   │
+  │       score += queue_penalty                                             │
+  │       if queue_penalty != 0:                                             │
+  │           self.log(f"[Hydra+: QUEUE] {username}: "                       │
+  │                    f"slots={free_slots}, queue={queue_size}, "           │
+  │                    f"penalty={queue_penalty}")                           │
+  │                                                                           │
+  │   • Modify _score_album_folder() method (lines 752-845):                 │
+  │     - Apply same queue penalty logic to folder candidates                │
+  │     - Combine with existing upload_speed bonus                           │
+  │                                                                           │
+  │ STEP 5: Read Penalty Mode from Search Preferences                        │
+  │ ────────────────────────────────────────────────────────────────────────│
+  │   • Update bridge-server.js to accept queue_penalty_mode parameter:      │
+  │     const searchData = {                                                 │
+  │         ...existing fields...,                                           │
+  │         queue_penalty_mode: data.queue_penalty_mode || 'medium'          │
+  │     };                                                                    │
+  │   • Store in nicotine-queue.json with search metadata                    │
+  │   • Read in __init__.py when processing search:                          │
+  │     penalty_mode = search_info.get('queue_penalty_mode', 'medium')       │
+  │                                                                           │
+  │ STEP 6: Add Queue Filter Settings to Extension Popup                     │
+  │ ────────────────────────────────────────────────────────────────────────│
+  │   • Add to popup.html preferences section:                               │
+  │                                                                           │
+  │     <div class="queue-filter-section">                                   │
+  │       <h3>Queue Detection</h3>                                           │
+  │       <label>                                                             │
+  │         <input type="checkbox" id="enableQueueFilter" checked>           │
+  │         Avoid users with long download queues                            │
+  │       </label>                                                            │
+  │                                                                           │
+  │       <label>Queue penalty severity:</label>                             │
+  │       <select id="queuePenaltyMode">                                     │
+  │         <option value="light">Light (-50 pts for 50+ queues)</option>    │
+  │         <option value="medium" selected>Medium (-100 pts)</option>       │
+  │         <option value="heavy">Heavy (-200 pts, almost exclude)</option>  │
+  │       </select>                                                           │
+  │                                                                           │
+  │       <small>                                                             │
+  │         Prioritizes users with free upload slots (round-robin) over      │
+  │         users with long queues. Helps avoid downloads that get stuck.    │
+  │       </small>                                                            │
+  │     </div>                                                                │
+  │                                                                           │
+  │   • Update popup.js to store/load these preferences:                     │
+  │     chrome.storage.sync.get(['enableQueueFilter', 'queuePenaltyMode'])   │
+  │     chrome.storage.sync.set({...})                                       │
+  │                                                                           │
+  │   • Update content.js to send preferences with each search request       │
+  │                                                                           │
+  │ STEP 7: Logging & User Feedback                                          │
+  │ ────────────────────────────────────────────────────────────────────────│
+  │   • Add detailed logging to show queue detection in action:              │
+  │     "[Hydra+: QUEUE] Analyzing 15 candidates..."                         │
+  │     "[Hydra+: QUEUE] user123: slots=2, queue=0, bonus=+50"               │
+  │     "[Hydra+: QUEUE] user456: slots=0, queue=87, penalty=-100"           │
+  │     "[Hydra+: QUEUE] Selected user123 (instant download available)"      │
+  │   • Log summary after ranking:                                           │
+  │     "[Hydra+: QUEUE] 8/15 candidates penalized for long queues"          │
+  │     "[Hydra+: QUEUE] 3/15 candidates rewarded for free slots"            │
+  └──────────────────────────────────────────────────────────────────────────┘
+
+  FILES TO MODIFY:
+    • Hydra+_Plugin/__init__.py (capture metadata, add queue penalty logic)
+    • Hydra+_Extension/popup.html (add queue filter UI)
+    • Hydra+_Extension/popup.js (add queue preference handling)
+    • Hydra+_Extension/content.js (send queue preferences to bridge)
+    • Hydra+_Plugin/Server/bridge-server.js (pass queue prefs to queue)
+
+  BENEFITS:
+    • Faster downloads by prioritizing instant-available uploads
+    • Reduced stuck/timeout downloads from offline queue-based users
+    • Better success rate for multi-headed fallback system
+    • User control over penalty severity based on patience level
+
+═══════════════════════════════════════════════════════════════════════════════
   IMPLEMENTATION PRIORITY
 ═══════════════════════════════════════════════════════════════════════════════
 
@@ -505,10 +678,14 @@
   2. [HIGH]   Feature #4: Lossless Auto-Conversion
               └─ Moderate complexity, depends on #3, requires FFmpeg
 
-  3. [MEDIUM] Feature #1: Discogs Integration
+  3. [HIGH]   Feature #5: Smart Queue Detection & Upload Method Filtering
+              └─ Low-medium complexity, high user value, improves download success
+                 Uses existing Nicotine+ metadata, no external dependencies
+
+  4. [MEDIUM] Feature #1: Discogs Integration
               └─ Moderate complexity, similar to existing Spotify logic
 
-  4. [LOW]    Feature #2: Spotify Desktop App Integration
+  5. [LOW]    Feature #2: Spotify Desktop App Integration
               └─ High complexity, requires Spicetify or complex Windows API work
 
 ═══════════════════════════════════════════════════════════════════════════════
