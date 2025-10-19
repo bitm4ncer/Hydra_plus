@@ -135,10 +135,31 @@ $$$$$$$ ` $$$$$$ ;$$$$;  $$$$l$$$$;  $$$$;   $$$$     $$$$;   $$$$$$~  :$$$$$$$$
   [√] Track Number
   [√] High-Quality Artwork
 
-  Get API credentials: developer.spotify.com/dashboard
-  → Create App → Copy Client ID & Secret → Paste in extension popup
+  ╔══════════════════════════════════════════════════════════════════════════╗
+  ║  HOW TO GET SPOTIFY API CREDENTIALS (OPTIONAL)                          ║
+  ╚══════════════════════════════════════════════════════════════════════════╝
 
-  Credentials are only stored locally and free to use.
+  1. Go to: developer.spotify.com/dashboard
+  2. Log in with your Spotify account
+  3. Click "Create app"
+     → App name: "Hydra Plus" (or anything you want)
+     → App description: "Personal use for Hydra+"
+     → Redirect URI: http://localhost (doesn't matter for this use)
+     → Check: "Web API"
+  4. Click "Settings" → Copy your Client ID and Client Secret
+  5. Open Hydra+ extension popup → Paste credentials → Save
+
+  ⚠️  SECURITY: Never share your credentials publicly or commit them to git!
+      Credentials are stored locally in:
+      • Chrome storage (extension popup)
+      • Hydra+_Plugin/Server/spotify-credentials.json (bridge server)
+
+  ⚠️  FIRST-TIME SETUP: Copy the template file to create your credentials:
+      Copy: Hydra+_Plugin/Server/spotify-credentials.json.template
+      To:   Hydra+_Plugin/Server/spotify-credentials.json
+      Edit the new file and replace placeholders with your actual credentials.
+
+  Credentials are FREE to use and only stored on your local machine.
 
 ┌──────────────────────────────────────────────────────────────────────────────┐
 │                      >> AUTO-DOWNLOAD SCORING <<                             │
