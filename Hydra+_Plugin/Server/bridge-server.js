@@ -56,6 +56,10 @@ const CREDENTIALS_FILE = path.join(__dirname, 'spotify-credentials.json');
 const metadataQueue = [];
 let isProcessingMetadata = false;
 
+// Cover art cache to avoid downloading the same image multiple times per album
+// Key: imageUrl, Value: { buffer: Buffer, timestamp: number }
+const coverArtCache = new Map();
+
 // Note: Album batch processing is handled via sequential metadata queue processing
 // which naturally prevents concurrent issues by processing one track at a time
 
@@ -921,12 +925,27 @@ async function fetchSpotifyMetadata(trackId) {
   });
 }
 
-// Download cover art from URL
+// Download cover art from URL (with caching to avoid re-downloading for each track)
 async function downloadCoverArt(imageUrl) {
   return new Promise((resolve) => {
     if (!imageUrl) {
       resolve(null);
       return;
+    }
+
+    // Check cache first (cover art is same for all tracks in album)
+    const cached = coverArtCache.get(imageUrl);
+    if (cached) {
+      // Cache hit - reuse the downloaded image
+      const age = Date.now() - cached.timestamp;
+      if (age < 300000) { // Cache for 5 minutes
+        console.log(`[Hydra+: META] ✓ Using cached cover (${cached.buffer.length} bytes)`);
+        resolve(cached.buffer);
+        return;
+      } else {
+        // Cache expired, remove it
+        coverArtCache.delete(imageUrl);
+      }
     }
 
     console.log(`[Hydra+: META] ⬇ Downloading cover...`);
@@ -944,6 +963,13 @@ async function downloadCoverArt(imageUrl) {
       imgRes.on('end', () => {
         const buffer = Buffer.concat(chunks);
         console.log(`[Hydra+: META] ✓ Cover: ${buffer.length} bytes`);
+
+        // Store in cache for future tracks in this album
+        coverArtCache.set(imageUrl, {
+          buffer: buffer,
+          timestamp: Date.now()
+        });
+
         resolve(buffer);
       });
       imgRes.on('error', (err) => {
