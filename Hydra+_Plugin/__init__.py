@@ -1718,10 +1718,11 @@ class Plugin(BasePlugin):
                     failed += 1
                     self.log(f"[Hydra+: ALBUM-META] ✗ Track {i + 1}/{total_tracks} failed")
 
-                # CRITICAL FIX: Minimal delay (server now responds immediately)
-                # No need for 1s delay since server replies after rename
+                # CRITICAL FIX: Add delay to allow background metadata processing to complete
+                # Background processing (Spotify API + cover art) continues after response
+                # Need longer delay to prevent overwhelming server with concurrent requests
                 if i < total_tracks - 1:
-                    time.sleep(0.1)  # Just 100ms to avoid overwhelming
+                    time.sleep(2.0)  # 2 second delay allows background processing to finish
 
             except Exception as e:
                 self.log(f"[Hydra+: ALBUM-META] ✗ Exception processing track {i + 1}: {e}")
@@ -1731,6 +1732,12 @@ class Plugin(BasePlugin):
                 # Continue with next track even on error
 
         self.log(f"[Hydra+: ALBUM-META] ✓ Batch complete: {successful} succeeded, {failed} failed")
+
+        # CRITICAL FIX: Add delay after batch processing to allow final background tasks to complete
+        # The last track's background processing may still be running
+        if total_tracks > 0:
+            self.log(f"[Hydra+: ALBUM-META] Waiting for final background tasks to complete...")
+            time.sleep(3.0)  # 3 second buffer for last track's background processing
 
     def _process_single_track_metadata(self, file_path, track_info):
         """
