@@ -300,6 +300,13 @@ const server = http.createServer((req, res) => {
     return;
   }
 
+  // Handle GET to /ping - simple health check endpoint
+  if (req.method === 'GET' && req.url === '/ping') {
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ status: 'ok' }));
+    return;
+  }
+
   // Handle GET to /status
   if (req.method === 'GET' && req.url === '/status') {
     try {
