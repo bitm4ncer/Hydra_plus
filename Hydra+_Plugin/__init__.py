@@ -1847,6 +1847,7 @@ class Plugin(BasePlugin):
             from urllib.error import URLError
             import json
             import os
+            import time
 
             # Verify file exists and is MP3
             if not os.path.exists(file_path):
@@ -1904,7 +1905,42 @@ class Plugin(BasePlugin):
 
         except URLError as e:
             error_msg = str(e)
-            # Only log if not a timeout (timeouts are less critical now)
+            # Check if this is a server crash (connection refused/reset)
+            is_server_crash = any(x in error_msg.lower() for x in [
+                'connection refused', 'connection reset', 'forcibly closed',
+                'cannot connect', 'connection aborted', 'winerror 10054'
+            ])
+
+            if is_server_crash:
+                self.log(f"[Hydra+: ALBUM-META] ✗ SERVER CRASH DETECTED: {e}")
+                self.log(f"[Hydra+: ALBUM-META] Waiting for server to restart...")
+
+                # Wait for server to restart (up to 30 seconds)
+                max_wait = 30
+                for attempt in range(max_wait):
+                    time.sleep(1)
+                    try:
+                        # Try to ping the server
+                        ping_url = f"{self.settings['bridge_url']}/ping"
+                        ping_req = Request(ping_url)
+                        with urlopen(ping_req, timeout=2) as ping_response:
+                            if ping_response.getcode() == 200:
+                                self.log(f"[Hydra+: ALBUM-META] ✓ Server back online after {attempt + 1}s")
+
+                                # Retry the failed track
+                                self.log(f"[Hydra+: ALBUM-META] Retrying failed track: {os.path.basename(file_path)}")
+                                time.sleep(2)  # Give server time to stabilize
+
+                                # Recursive retry (will raise URLError again if fails)
+                                return self._process_single_track_metadata(file_path, track_info, token, track_index)
+                    except:
+                        pass  # Server not ready yet, continue waiting
+
+                # Server didn't come back online
+                self.log(f"[Hydra+: ALBUM-META] ✗ Server did not restart within {max_wait}s")
+                return (False, file_path)
+
+            # Not a crash, just a timeout or other error
             if 'timed out' in error_msg:
                 self.log(f"[Hydra+: ALBUM-META] ⚠ Timeout (continuing): {file_path}")
             else:
