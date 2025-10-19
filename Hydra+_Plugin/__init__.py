@@ -309,9 +309,10 @@ class Plugin(BasePlugin):
         self.log("═══════════════════════════════════════════════════════════")
         self.log(f"  [BRIDGE]    → {bridge_url}")
         self.log(f"  [POLLING]   → Every {poll_interval}s")
-        self.log(f"  [VERSION]   → v{__version__}")
         self.log("═══════════════════════════════════════════════════════════")
         self.log("  🐍 Multi-headed beast awakened!")
+        self.log("═══════════════════════════════════════════════════════════")
+        self.log(f"  v{__version__}")
         self.log("═══════════════════════════════════════════════════════════")
         self.log("[Hydra+] Waiting for Nicotine+ to connect to the network...")
 
@@ -1210,10 +1211,11 @@ class Plugin(BasePlugin):
             self.log(f"[Hydra+: ALBUM] ✓ Matched {len(tracks_to_download)}/{len(search_info['tracks'])} tracks")
             self.log(f"[Hydra+: ALBUM] Starting track 1/{len(tracks_to_download)}...")
 
-            # PREFETCH: Start fetching metadata for FIRST track before download begins
+            # ALBUM-LEVEL PREFETCH: Fetch album metadata ONCE (year, cover art)
+            # This is shared across all tracks and should not be fetched per-track
             if len(tracks_to_download) > 0:
                 first_track_info = tracks_to_download[0]['track_info']
-                self._prefetch_track_metadata(token, 0, first_track_info)
+                self._prefetch_album_metadata(token, first_track_info)
 
             # Start downloading first track
             self._download_next_album_track(token, search_info)
@@ -1359,15 +1361,14 @@ class Plugin(BasePlugin):
 
         return matched_tracks
 
-    def _prefetch_track_metadata(self, token, track_index, track_info):
+    def _prefetch_album_metadata(self, token, first_track_info):
         """
-        Prefetch metadata for a track in a background thread.
-        This runs during download time so metadata is ready when track completes.
+        Prefetch ALBUM-LEVEL metadata once (year, cover art URL).
+        This is shared across all tracks in the album - no need to fetch per-track.
 
         Args:
             token: Search token
-            track_index: Index of track in album
-            track_info: Track metadata dict with track_id, artist, track, album
+            first_track_info: Track metadata dict from first track (to get album info)
         """
         from threading import Thread
 
@@ -1375,16 +1376,17 @@ class Plugin(BasePlugin):
             try:
                 from urllib.request import urlopen, Request
                 from urllib.error import URLError
-                import json
+                import re
 
-                track_id = track_info.get('track_id', '')
+                track_id = first_track_info.get('track_id', '')
                 if not track_id:
-                    self.log(f"[Hydra+: PREFETCH] ⚠ No track_id for track {track_index + 1}, skipping prefetch")
+                    self.log(f"[Hydra+: PREFETCH-ALBUM] ⚠ No track_id, skipping album metadata prefetch")
                     return
 
-                self.log(f"[Hydra+: PREFETCH] Starting prefetch for track {track_index + 1}: {track_info.get('track', 'Unknown')}")
+                album_name = first_track_info.get('album', 'Unknown Album')
+                self.log(f"[Hydra+: PREFETCH-ALBUM] Fetching album metadata for: {album_name}")
 
-                # Fetch metadata from Spotify page (year, label, cover URL)
+                # Fetch album metadata from Spotify page (year, cover URL)
                 track_url = f"https://open.spotify.com/track/{track_id}"
 
                 try:
@@ -1395,35 +1397,34 @@ class Plugin(BasePlugin):
                     with urlopen(req, timeout=30) as response:
                         html = response.read().decode('utf-8')
 
-                        metadata = {}
+                        album_metadata = {}
 
-                        # Extract year from release date
-                        import re
+                        # Extract year from release date (ALBUM-LEVEL)
                         release_match = re.search(r'<meta name="music:release_date" content="([^"]+)"', html)
                         if release_match:
                             release_date = release_match.group(1)
-                            metadata['year'] = release_date.split('-')[0]
+                            album_metadata['year'] = release_date.split('-')[0]
 
-                        # Extract cover image URL
+                        # Extract cover image URL (ALBUM-LEVEL)
                         image_match = re.search(r'<meta property="og:image" content="([^"]+)"', html)
                         if image_match:
-                            metadata['image_url'] = image_match.group(1)
+                            album_metadata['image_url'] = image_match.group(1)
 
-                        # Store in cache
-                        cache_key = (token, track_index)
-                        self.metadata_cache[cache_key] = metadata
+                        # Store in cache with 'album' key so all tracks can share it
+                        cache_key = (token, 'album')
+                        self.metadata_cache[cache_key] = album_metadata
 
-                        self.log(f"[Hydra+: PREFETCH] ✓ Track {track_index + 1} metadata cached (year={metadata.get('year', 'N/A')})")
+                        self.log(f"[Hydra+: PREFETCH-ALBUM] ✓ Album metadata cached (year={album_metadata.get('year', 'N/A')})")
 
                 except URLError as e:
-                    self.log(f"[Hydra+: PREFETCH] ⚠ Failed to fetch metadata for track {track_index + 1}: {e}")
+                    self.log(f"[Hydra+: PREFETCH-ALBUM] ⚠ Failed to fetch album metadata: {e}")
                 except Exception as e:
-                    self.log(f"[Hydra+: PREFETCH] ⚠ Error prefetching track {track_index + 1}: {e}")
+                    self.log(f"[Hydra+: PREFETCH-ALBUM] ⚠ Error prefetching album metadata: {e}")
 
             except Exception as e:
-                self.log(f"[Hydra+: PREFETCH] ✗ Fatal error in prefetch worker: {e}")
+                self.log(f"[Hydra+: PREFETCH-ALBUM] ✗ Fatal error in prefetch worker: {e}")
                 import traceback
-                self.log(f"[Hydra+: PREFETCH] {traceback.format_exc()}")
+                self.log(f"[Hydra+: PREFETCH-ALBUM] {traceback.format_exc()}")
 
         # Start prefetch in background thread
         thread = Thread(target=prefetch_worker, daemon=True)
@@ -1456,12 +1457,6 @@ class Plugin(BasePlugin):
             # Track this download
             self.active_downloads[track_to_download['file_path']] = token
             search_info['download_started_at'] = time.time()
-
-            # PREFETCH: Start fetching metadata for NEXT track while this one downloads
-            next_index = current_index + 1
-            if next_index < len(tracks_to_download):
-                next_track_info = tracks_to_download[next_index]['track_info']
-                self._prefetch_track_metadata(token, next_index, next_track_info)
 
         except Exception as e:
             self.log(f"[Hydra+: ALBUM] Error downloading track: {e}")
@@ -1864,15 +1859,15 @@ class Plugin(BasePlugin):
                 self.log(f"[Hydra+: ALBUM-META] ✗ Unsupported format (only MP3/FLAC), skipping: {file_path}")
                 return (False, file_path)
 
-            # Check if we have prefetched metadata in cache
-            cached_metadata = None
-            if token is not None and track_index is not None:
-                cache_key = (token, track_index)
-                cached_metadata = self.metadata_cache.get(cache_key)
-                if cached_metadata:
-                    self.log(f"[Hydra+: ALBUM-META]   Using cached metadata (year={cached_metadata.get('year', 'N/A')})")
+            # Check if we have prefetched ALBUM metadata in cache (shared across all tracks)
+            album_metadata = None
+            if token is not None:
+                cache_key = (token, 'album')
+                album_metadata = self.metadata_cache.get(cache_key)
+                if album_metadata:
+                    self.log(f"[Hydra+: ALBUM-META]   Using cached album metadata (year={album_metadata.get('year', 'N/A')})")
 
-            # Prepare request data with track number and prefetched metadata
+            # Prepare request data with track number and prefetched album metadata
             payload = {
                 'file_path': file_path,
                 'artist': track_info.get('artist', ''),
@@ -1882,10 +1877,10 @@ class Plugin(BasePlugin):
                 'track_number': track_info.get('track_number', 0)
             }
 
-            # Add prefetched metadata if available (server will skip Spotify page fetch)
-            if cached_metadata:
-                payload['prefetched_year'] = cached_metadata.get('year', '')
-                payload['prefetched_image_url'] = cached_metadata.get('image_url', '')
+            # Add prefetched album metadata if available (server will skip Spotify page fetch)
+            if album_metadata:
+                payload['prefetched_year'] = album_metadata.get('year', '')
+                payload['prefetched_image_url'] = album_metadata.get('image_url', '')
 
             # Send to Node server with REDUCED timeout (server responds immediately now)
             url = f"{self.settings['bridge_url']}/process-metadata"
