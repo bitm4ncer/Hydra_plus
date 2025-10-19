@@ -1578,21 +1578,16 @@ class Plugin(BasePlugin):
 
             self.log(f"[Hydra+: ALBUM] ✓ Album complete: {len(downloaded_tracks)}/{len(search_info['tracks'])} tracks downloaded")
 
-            # Process all metadata in batch if enabled (in background thread to avoid blocking)
-            if search_info.get('metadata_override', True):
-                self.log(f"[Hydra+: ALBUM] Starting metadata processing in background...")
-                from threading import Thread
-                metadata_thread = Thread(
-                    target=self._process_album_metadata_and_organize,
-                    args=(downloaded_tracks, search_info),
-                    daemon=True
-                )
-                metadata_thread.start()
-                self.log(f"[Hydra+: ALBUM] Metadata processing running in background...")
-            else:
-                # No metadata processing - organize immediately
-                self.log(f"[Hydra+: ALBUM] Metadata override disabled, organizing files...")
-                self._organize_album_folder(downloaded_tracks, search_info)
+            # Metadata was already processed one-at-a-time during downloads
+            # Just organize into album folder now
+            self.log(f"[Hydra+: ALBUM] All tracks already processed, organizing into album folder...")
+            from threading import Thread
+            organize_thread = Thread(
+                target=self._organize_album_folder,
+                args=(downloaded_tracks, search_info),
+                daemon=True
+            )
+            organize_thread.start()
 
             # Clean up
             del self.active_searches[token]
@@ -1736,15 +1731,30 @@ class Plugin(BasePlugin):
 
             self.log(f"[Hydra+: ALBUM] ✓ Track {current_index + 1}/{len(tracks_to_download)} complete: {track_info['track']}")
 
-            # Store downloaded track info for batch metadata processing later
+            # Initialize downloaded_tracks list if needed
             if 'downloaded_tracks' not in search_info:
                 search_info['downloaded_tracks'] = []
 
-            # Store both file path and track info for metadata processing
+            # CRITICAL CHANGE: Process metadata immediately after download (one at a time)
+            # This prevents server overload from batch processing all tracks at once
+            self.log(f"[Hydra+: ALBUM-META] Processing track {current_index + 1} immediately...")
+            success, new_path = self._process_single_track_metadata(
+                real_path,
+                track_info,
+                token,
+                current_index
+            )
+
+            # Store the processed track (with updated path if renamed)
             search_info['downloaded_tracks'].append({
-                'file_path': real_path,
+                'file_path': new_path if success else real_path,
                 'track_info': track_info
             })
+
+            if success:
+                self.log(f"[Hydra+: ALBUM-META] ✓ Track {current_index + 1} metadata complete")
+            else:
+                self.log(f"[Hydra+: ALBUM-META] ✗ Track {current_index + 1} metadata failed")
 
         # Clean up download tracking
         del self.active_downloads[virtual_path]
