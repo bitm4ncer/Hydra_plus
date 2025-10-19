@@ -1927,12 +1927,39 @@ class Plugin(BasePlugin):
                         with urlopen(ping_req, timeout=2) as ping_response:
                             if ping_response.getcode() == 200:
                                 self.log(f"[Hydra+: ALBUM-META] ✓ Server back online after {attempt + 1}s")
-
-                                # Retry the failed track
-                                self.log(f"[Hydra+: ALBUM-META] Retrying failed track: {os.path.basename(file_path)}")
                                 time.sleep(2)  # Give server time to stabilize
 
-                                # Recursive retry (will raise URLError again if fails)
+                                # Check if file was already renamed before the crash
+                                # The server might have renamed the file before crashing
+                                actual_file_path = file_path
+                                if not os.path.exists(file_path):
+                                    # Try to find the renamed file (format: "NN Artist - Track.mp3")
+                                    dir_path = os.path.dirname(file_path)
+                                    track_name = track_info.get('track', '')
+                                    artist_name = track_info.get('artist', '')
+                                    track_num = track_info.get('track_number', 0)
+
+                                    # Try various possible renamed formats
+                                    possible_names = [
+                                        f"{track_num:02d} {artist_name} - {track_name}.mp3",
+                                        f"{track_num:02d} - {track_name}.mp3",
+                                        f"{track_num:02d} {track_name}.mp3"
+                                    ]
+
+                                    for possible_name in possible_names:
+                                        possible_path = os.path.join(dir_path, possible_name)
+                                        if os.path.exists(possible_path):
+                                            self.log(f"[Hydra+: ALBUM-META] File was already renamed to: {possible_name}")
+                                            actual_file_path = possible_path
+                                            break
+
+                                # If file exists (original or renamed), consider it successful
+                                if os.path.exists(actual_file_path):
+                                    self.log(f"[Hydra+: ALBUM-META] ✓ Track was already processed before crash")
+                                    return (True, actual_file_path)
+
+                                # File doesn't exist in any form, try retry
+                                self.log(f"[Hydra+: ALBUM-META] Retrying failed track: {os.path.basename(file_path)}")
                                 return self._process_single_track_metadata(file_path, track_info, token, track_index)
                     except:
                         pass  # Server not ready yet, continue waiting
@@ -1971,12 +1998,39 @@ class Plugin(BasePlugin):
                         with urlopen(ping_req, timeout=2) as ping_response:
                             if ping_response.getcode() == 200:
                                 self.log(f"[Hydra+: ALBUM-META] ✓ Server back online after {attempt + 1}s")
-
-                                # Retry the failed track
-                                self.log(f"[Hydra+: ALBUM-META] Retrying failed track: {os.path.basename(file_path)}")
                                 time.sleep(2)  # Give server time to stabilize
 
-                                # Recursive retry (will raise exception again if fails)
+                                # Check if file was already renamed before the crash
+                                # The server might have renamed the file before crashing
+                                actual_file_path = file_path
+                                if not os.path.exists(file_path):
+                                    # Try to find the renamed file (format: "NN Artist - Track.mp3")
+                                    dir_path = os.path.dirname(file_path)
+                                    track_name = track_info.get('track', '')
+                                    artist_name = track_info.get('artist', '')
+                                    track_num = track_info.get('track_number', 0)
+
+                                    # Try various possible renamed formats
+                                    possible_names = [
+                                        f"{track_num:02d} {artist_name} - {track_name}.mp3",
+                                        f"{track_num:02d} - {track_name}.mp3",
+                                        f"{track_num:02d} {track_name}.mp3"
+                                    ]
+
+                                    for possible_name in possible_names:
+                                        possible_path = os.path.join(dir_path, possible_name)
+                                        if os.path.exists(possible_path):
+                                            self.log(f"[Hydra+: ALBUM-META] File was already renamed to: {possible_name}")
+                                            actual_file_path = possible_path
+                                            break
+
+                                # If file exists (original or renamed), consider it successful
+                                if os.path.exists(actual_file_path):
+                                    self.log(f"[Hydra+: ALBUM-META] ✓ Track was already processed before crash")
+                                    return (True, actual_file_path)
+
+                                # File doesn't exist in any form, try retry
+                                self.log(f"[Hydra+: ALBUM-META] Retrying failed track: {os.path.basename(file_path)}")
                                 return self._process_single_track_metadata(file_path, track_info, token, track_index)
                     except:
                         pass  # Server not ready yet, continue waiting
