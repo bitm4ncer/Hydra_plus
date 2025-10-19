@@ -14,6 +14,19 @@ const fs = require('fs');
 const { promises: fsPromises } = require('fs');
 const path = require('path');
 
+// CRITICAL FIX: Configure HTTP agents with increased connection limits
+// Default Node.js limit is 5 concurrent connections per host, which causes
+// connection pool exhaustion when processing album batches with background fetches
+const httpAgent = new http.Agent({
+  maxSockets: 20,  // Allow up to 20 concurrent HTTP connections
+  keepAlive: true
+});
+
+const httpsAgent = new https.Agent({
+  maxSockets: 20,  // Allow up to 20 concurrent HTTPS connections (for Spotify)
+  keepAlive: true
+});
+
 // Load required npm packages with error handling
 let NodeID3, FlacTagger;
 try {
@@ -599,7 +612,8 @@ async function getSpotifyAccessToken() {
         'Authorization': `Basic ${auth}`,
         'Content-Type': 'application/x-www-form-urlencoded',
         'Content-Length': postData.length
-      }
+      },
+      agent: httpsAgent
     };
 
     const req = https.request(options, (res) => {
@@ -659,7 +673,8 @@ async function fetchSpotifyAPIMetadata(trackId) {
       method: 'GET',
       headers: {
         'Authorization': `Bearer ${accessToken}`
-      }
+      },
+      agent: httpsAgent
     };
 
     const trackReq = https.get(options, (res) => {
@@ -681,7 +696,8 @@ async function fetchSpotifyAPIMetadata(trackId) {
               method: 'GET',
               headers: {
                 'Authorization': `Bearer ${accessToken}`
-              }
+              },
+              agent: httpsAgent
             };
 
             const artistReq = https.get(artistOptions, (artistRes) => {
@@ -846,7 +862,7 @@ async function fetchSpotifyMetadata(trackId) {
       resolve({});
     }, 30000);
 
-    const req = https.get(trackUrl, (res) => {
+    const req = https.get(trackUrl, { agent: httpsAgent }, (res) => {
       clearTimeout(timeout);
       let data = '';
       res.on('data', chunk => data += chunk);
@@ -921,7 +937,7 @@ async function downloadCoverArt(imageUrl) {
       resolve(null);
     }, 30000);
 
-    const req = https.get(imageUrl, (imgRes) => {
+    const req = https.get(imageUrl, { agent: httpsAgent }, (imgRes) => {
       clearTimeout(timeout);
       const chunks = [];
       imgRes.on('data', chunk => chunks.push(chunk));
