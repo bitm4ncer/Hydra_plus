@@ -1578,16 +1578,16 @@ class Plugin(BasePlugin):
 
             self.log(f"[Hydra+: ALBUM] ✓ Album complete: {len(downloaded_tracks)}/{len(search_info['tracks'])} tracks downloaded")
 
-            # Metadata was already processed one-at-a-time during downloads
-            # Just organize into album folder now
-            self.log(f"[Hydra+: ALBUM] All tracks already processed, organizing into album folder...")
+            # Process metadata one-at-a-time with delays to prevent server overload
+            self.log(f"[Hydra+: ALBUM] Starting sequential metadata processing...")
             from threading import Thread
-            organize_thread = Thread(
-                target=self._organize_album_folder,
+            metadata_thread = Thread(
+                target=self._process_album_metadata_and_organize,
                 args=(downloaded_tracks, search_info),
                 daemon=True
             )
-            organize_thread.start()
+            metadata_thread.start()
+            self.log(f"[Hydra+: ALBUM] Metadata processing running in background...")
 
             # Clean up
             del self.active_searches[token]
@@ -1735,26 +1735,11 @@ class Plugin(BasePlugin):
             if 'downloaded_tracks' not in search_info:
                 search_info['downloaded_tracks'] = []
 
-            # CRITICAL CHANGE: Process metadata immediately after download (one at a time)
-            # This prevents server overload from batch processing all tracks at once
-            self.log(f"[Hydra+: ALBUM-META] Processing track {current_index + 1} immediately...")
-            success, new_path = self._process_single_track_metadata(
-                real_path,
-                track_info,
-                token,
-                current_index
-            )
-
-            # Store the processed track (with updated path if renamed)
+            # Store track info for processing (will be processed one-at-a-time with delays)
             search_info['downloaded_tracks'].append({
-                'file_path': new_path if success else real_path,
+                'file_path': real_path,
                 'track_info': track_info
             })
-
-            if success:
-                self.log(f"[Hydra+: ALBUM-META] ✓ Track {current_index + 1} metadata complete")
-            else:
-                self.log(f"[Hydra+: ALBUM-META] ✗ Track {current_index + 1} metadata failed")
 
         # Clean up download tracking
         del self.active_downloads[virtual_path]
@@ -1814,10 +1799,11 @@ class Plugin(BasePlugin):
                     failed += 1
                     self.log(f"[Hydra+: ALBUM-META] ✗ Track {i + 1}/{total_tracks} failed")
 
-                # IMPROVED: Minimal delay since metadata is prefetched and server responds immediately
-                # Only need small delay to prevent request flooding
+                # CRITICAL: Add delay between tracks to prevent server overload
+                # The server does background work (cover download, tag writing) that takes time
+                # Processing tracks too quickly causes concurrent background jobs to pile up
                 if i < total_tracks - 1:
-                    time.sleep(0.3)  # 300ms delay (down from 2s) - metadata already cached
+                    time.sleep(2)  # 2 second delay to let server finish background work
 
             except Exception as e:
                 self.log(f"[Hydra+: ALBUM-META] ✗ Exception processing track {i + 1}: {e}")
