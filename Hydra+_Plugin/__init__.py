@@ -123,6 +123,72 @@ class Plugin(BasePlugin):
         except:
             return False
 
+    def _check_npm_dependencies(self):
+        """Check if npm dependencies are installed, and install them if missing."""
+        server_dir = os.path.join(self.plugin_dir, 'Server')
+        node_modules_dir = os.path.join(server_dir, 'node_modules')
+        package_json = os.path.join(server_dir, 'package.json')
+
+        # Check if package.json exists
+        if not os.path.exists(package_json):
+            self.log("[Hydra+] WARNING: package.json not found, skipping dependency check")
+            return True
+
+        # Check if node_modules exists and has the required packages
+        required_packages = ['node-id3', 'flac-tagger']
+        missing_packages = []
+
+        if not os.path.exists(node_modules_dir):
+            missing_packages = required_packages
+        else:
+            for package in required_packages:
+                package_dir = os.path.join(node_modules_dir, package)
+                if not os.path.exists(package_dir):
+                    missing_packages.append(package)
+
+        # If all packages are installed, we're good
+        if not missing_packages:
+            return True
+
+        # Install missing packages
+        self.log(f"[Hydra+] Missing npm packages: {', '.join(missing_packages)}")
+        self.log("[Hydra+] Installing dependencies... (this may take a moment)")
+
+        try:
+            startupinfo = None
+            if os.name == 'nt':  # Windows
+                startupinfo = subprocess.STARTUPINFO()
+                startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+
+            # Run npm install (use npm.cmd on Windows)
+            npm_cmd = 'npm.cmd' if os.name == 'nt' else 'npm'
+            result = subprocess.run(
+                [npm_cmd, 'install'],
+                cwd=server_dir,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                startupinfo=startupinfo,
+                timeout=60  # 60 second timeout
+            )
+
+            if result.returncode == 0:
+                self.log("[Hydra+] SUCCESS: Dependencies installed successfully")
+                return True
+            else:
+                stderr_output = result.stderr.decode('utf-8', errors='ignore')
+                self.log(f"[Hydra+] ERROR: npm install failed: {stderr_output}")
+                return False
+
+        except FileNotFoundError:
+            self.log("[Hydra+] ERROR: npm not found - please install Node.js")
+            return False
+        except subprocess.TimeoutExpired:
+            self.log("[Hydra+] ERROR: npm install timed out")
+            return False
+        except Exception as e:
+            self.log(f"[Hydra+] ERROR: Error installing dependencies: {e}")
+            return False
+
     def _start_server(self):
         """Start the bridge server if it's not running."""
         if not self.settings.get('auto_start_server', True):
@@ -131,6 +197,11 @@ class Plugin(BasePlugin):
 
         if not os.path.exists(self.server_path):
             self.log(f"[Hydra+] Server not found at: {self.server_path}")
+            return False
+
+        # Check and install dependencies if needed
+        if not self._check_npm_dependencies():
+            self.log("[Hydra+] ERROR: Failed to install npm dependencies")
             return False
 
         try:
@@ -155,10 +226,10 @@ class Plugin(BasePlugin):
             return True
 
         except FileNotFoundError:
-            self.log("[Hydra+] ✗ NODE.JS NOT FOUND → Please install Node.js")
+            self.log("[Hydra+] ERROR: NODE.JS NOT FOUND - Please install Node.js")
             return False
         except Exception as e:
-            self.log(f"[Hydra+] ✗ ERROR starting server: {e}")
+            self.log(f"[Hydra+] ERROR: Starting server failed: {e}")
             return False
 
     def _cleanup_server_process(self):
