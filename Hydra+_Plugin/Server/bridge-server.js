@@ -1048,7 +1048,8 @@ async function processMetadata(data, res) {
     // Continue with metadata processing in background (don't block response)
     // This runs asynchronously and won't delay the next track in album batches
     // CRITICAL: All code in this block must be wrapped in try-catch to prevent server crashes
-    setImmediate(() => {
+    // CRITICAL FIX: Add small delay to prevent concurrent background job pile-up
+    setTimeout(() => {
       (async () => {
         try {
           console.log('[Hydra+: META] Continuing metadata fetch in background...');
@@ -1250,7 +1251,7 @@ async function processMetadata(data, res) {
         console.error(`[Hydra+: META] ✗ Async processing error: ${asyncError.message}`);
         console.error(`[Hydra+: META] Stack: ${asyncError.stack}`);
       });
-    });
+    }, 500); // 500ms delay to prevent concurrent background job pile-up
 
     return; // Exit here since we already sent response
 
