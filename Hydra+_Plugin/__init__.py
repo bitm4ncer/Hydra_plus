@@ -1904,11 +1904,12 @@ class Plugin(BasePlugin):
                     return (False, file_path)
 
         except URLError as e:
-            error_msg = str(e)
+            error_msg = str(e).lower()
+            error_repr = repr(e).lower()
             # Check if this is a server crash (connection refused/reset)
-            is_server_crash = any(x in error_msg.lower() for x in [
+            is_server_crash = any(x in error_msg or x in error_repr for x in [
                 'connection refused', 'connection reset', 'forcibly closed',
-                'cannot connect', 'connection aborted', 'winerror 10054'
+                'cannot connect', 'connection aborted', 'winerror 10054', '10054'
             ])
 
             if is_server_crash:
@@ -1947,6 +1948,44 @@ class Plugin(BasePlugin):
                 self.log(f"[Hydra+: ALBUM-META] ✗ Cannot reach Node server: {e}")
             return (False, file_path)
         except Exception as e:
+            error_msg = str(e).lower()
+            error_repr = repr(e).lower()
+            # Check if this is a server crash (connection refused/reset)
+            is_server_crash = any(x in error_msg or x in error_repr for x in [
+                'connection refused', 'connection reset', 'forcibly closed',
+                'cannot connect', 'connection aborted', 'winerror 10054', '10054'
+            ])
+
+            if is_server_crash:
+                self.log(f"[Hydra+: ALBUM-META] ✗ SERVER CRASH DETECTED: {e}")
+                self.log(f"[Hydra+: ALBUM-META] Waiting for server to restart...")
+
+                # Wait for server to restart (up to 30 seconds)
+                max_wait = 30
+                for attempt in range(max_wait):
+                    time.sleep(1)
+                    try:
+                        # Try to ping the server
+                        ping_url = f"{self.settings['bridge_url']}/ping"
+                        ping_req = Request(ping_url)
+                        with urlopen(ping_req, timeout=2) as ping_response:
+                            if ping_response.getcode() == 200:
+                                self.log(f"[Hydra+: ALBUM-META] ✓ Server back online after {attempt + 1}s")
+
+                                # Retry the failed track
+                                self.log(f"[Hydra+: ALBUM-META] Retrying failed track: {os.path.basename(file_path)}")
+                                time.sleep(2)  # Give server time to stabilize
+
+                                # Recursive retry (will raise exception again if fails)
+                                return self._process_single_track_metadata(file_path, track_info, token, track_index)
+                    except:
+                        pass  # Server not ready yet, continue waiting
+
+                # Server didn't come back online
+                self.log(f"[Hydra+: ALBUM-META] ✗ Server did not restart within {max_wait}s")
+                return (False, file_path)
+
+            # Not a crash, just a regular error
             self.log(f"[Hydra+: ALBUM-META] ✗ Error: {e}")
             return (False, file_path)
 
