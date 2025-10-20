@@ -1686,7 +1686,10 @@ async function ensureAlbumFolder(data, res) {
     if (!fs.existsSync(albumFolderPath)) {
       await fsPromises.mkdir(albumFolderPath, { recursive: true });
       console.log(`[Hydra+: FOLDER] ✓ Created → ${albumFolderName}`);
-      addEvent('success', `Album folder created: ${albumFolderName}`);
+
+      // Create trackId for album folder event
+      const albumTrackId = `album-${album_artist}-${album_name}`.replace(/[^a-zA-Z0-9]/g, '').substring(0, 20);
+      addEvent('success', `Album folder created: ${albumFolderName}`, albumTrackId);
     } else {
       console.log(`[Hydra+: FOLDER] Already exists: ${albumFolderName}`);
     }
