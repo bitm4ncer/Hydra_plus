@@ -188,11 +188,14 @@ clearConsoleBtn.addEventListener('click', () => {
   trackColorMap.clear();
   nextColorIndex = 0;
 
+  // Clear progress bars
+  clearProgressBars();
+
   // Clear DOM
   consoleContent.innerHTML = '<div class="console-entry console-info"><span class="console-time">--:--:--</span><span class="console-message">Console cleared</span></div>';
 
-  // Clear storage
-  safeStorageSet({ consoleEvents: [] });
+  // Clear storage (events and active downloads)
+  safeStorageSet({ consoleEvents: [], activeDownloads: {} });
 
   // Add a brief confirmation message that will be replaced by next event
   setTimeout(() => {
