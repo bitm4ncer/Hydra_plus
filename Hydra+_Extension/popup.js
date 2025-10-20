@@ -445,8 +445,13 @@ async function checkServerStatus() {
 
       // Process events if provided by server
       if (data.events && Array.isArray(data.events)) {
+        // Debug: Log total events received from server
+        console.log('[Hydra+ Popup] Received', data.events.length, 'events from server, lastEventId:', lastEventId);
+
         // Filter out events we've already seen
         const newEvents = data.events.filter(event => event.id > lastEventId);
+
+        console.log('[Hydra+ Popup] Processing', newEvents.length, 'new events');
 
         newEvents.forEach(event => {
           // Update last event ID
