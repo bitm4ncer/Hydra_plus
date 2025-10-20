@@ -34,6 +34,7 @@ const patternPreviewAlbum = document.getElementById('patternPreviewAlbum');
 const fileNamingContainer = document.getElementById('fileNamingContainer');
 const toggleFileNamingBtn = document.getElementById('toggleFileNamingBtn');
 const progressBarsContainer = document.getElementById('progressBarsContainer');
+const progressSection = document.getElementById('progressSection');
 
 // Console management
 const MAX_CONSOLE_ENTRIES = 50;
@@ -275,7 +276,7 @@ function loadActiveDownloads() {
 // Track completion times for auto-removal after 1 minute
 const completionTimes = new Map(); // trackId -> timestamp
 
-// Update vertical progress bars in the right container
+// Update horizontal progress bars in separate section above Activity Log
 function updateProgressBars(activeDownloads) {
   const now = Date.now();
   let hasActiveBars = false;
@@ -313,7 +314,7 @@ function updateProgressBars(activeDownloads) {
   }
 
   // Remove bars that are no longer active
-  const existingBars = progressBarsContainer.querySelectorAll('.vertical-progress-bar');
+  const existingBars = progressBarsContainer.querySelectorAll('.horizontal-progress-bar');
   existingBars.forEach(bar => {
     const trackId = bar.getAttribute('data-track-id');
     if (!activeTrackIds.has(trackId)) {
@@ -335,25 +336,25 @@ function updateProgressBars(activeDownloads) {
     let barContainer = progressBarsContainer.querySelector(`[data-track-id="${trackId}"]`);
 
     if (!barContainer) {
-      // Create new bar
+      // Create new horizontal bar
       barContainer = document.createElement('div');
-      barContainer.className = 'vertical-progress-bar';
+      barContainer.className = 'horizontal-progress-bar';
       barContainer.setAttribute('data-track-id', trackId);
       barContainer.title = filename; // Tooltip shows filename on hover
 
       // Create the fill element
       const fill = document.createElement('div');
-      fill.className = 'progress-bar-fill-vertical';
-      fill.style.height = `${progress}%`;
+      fill.className = 'progress-bar-fill-horizontal';
+      fill.style.width = `${progress}%`;
       fill.style.backgroundColor = trackColor || '#B9FF37';
 
       barContainer.appendChild(fill);
       progressBarsContainer.appendChild(barContainer);
     } else {
       // Update existing bar
-      const fill = barContainer.querySelector('.progress-bar-fill-vertical');
+      const fill = barContainer.querySelector('.progress-bar-fill-horizontal');
       if (fill) {
-        fill.style.height = `${progress}%`;
+        fill.style.width = `${progress}%`;
         fill.style.backgroundColor = trackColor || '#B9FF37';
       }
 
@@ -362,18 +363,18 @@ function updateProgressBars(activeDownloads) {
     }
   }
 
-  // Show/hide container
+  // Show/hide progress section
   if (!hasActiveBars) {
-    progressBarsContainer.style.display = 'none';
+    progressSection.classList.remove('active');
   } else {
-    progressBarsContainer.style.display = 'flex';
+    progressSection.classList.add('active');
   }
 }
 
 // Clear all progress bars
 function clearProgressBars() {
   progressBarsContainer.innerHTML = '';
-  progressBarsContainer.style.display = 'none';
+  progressSection.classList.remove('active');
   completionTimes.clear();
 }
 

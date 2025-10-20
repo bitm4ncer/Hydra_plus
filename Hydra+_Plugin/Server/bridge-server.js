@@ -880,6 +880,37 @@ const server = http.createServer((req, res) => {
     return;
   }
 
+  // Handle POST to /remove-progress - Remove download from active progress tracking
+  if (req.method === 'POST' && req.url === '/remove-progress') {
+    let body = '';
+
+    req.on('data', chunk => {
+      body += chunk.toString();
+    });
+
+    req.on('end', () => {
+      try {
+        const data = JSON.parse(body);
+        const { trackId } = data;
+
+        if (trackId && activeDownloads.has(trackId)) {
+          const progressData = activeDownloads.get(trackId);
+          activeDownloads.delete(trackId);
+          console.log(`[Hydra+: PROGRESS] Removed download: ${progressData.filename.substring(0, 40)}`);
+        }
+
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: true }));
+      } catch (error) {
+        console.error('[Hydra+: PROGRESS] ✗ Error removing progress:', error);
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: false, error: 'Invalid JSON' }));
+      }
+    });
+
+    return;
+  }
+
   // Handle POST to /ensure-album-folder - Create album folder (upfront, before downloads)
   if (req.method === 'POST' && req.url === '/ensure-album-folder') {
     let body = '';

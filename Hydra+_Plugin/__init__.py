@@ -621,9 +621,34 @@ class Plugin(BasePlugin):
             # Silently fail - don't spam logs if bridge is offline
             pass
 
+    def _remove_progress_tracking(self, track_id):
+        """Remove download from bridge server's progress tracking when download is deleted."""
+        try:
+            import json
+            from urllib.request import Request, urlopen
+
+            bridge_url = self.settings.get('bridge_url', 'http://127.0.0.1:3847')
+            url = f"{bridge_url}/remove-progress"
+
+            data = {'trackId': track_id}
+
+            req = Request(url,
+                         data=json.dumps(data).encode('utf-8'),
+                         headers={'Content-Type': 'application/json'},
+                         method='POST')
+
+            # Non-blocking - don't wait for response
+            urlopen(req, timeout=0.5)
+        except Exception:
+            # Silently fail - don't spam logs if bridge is offline
+            pass
+
     def _monitor_download_progress(self):
         """Background thread to monitor active download progress and send updates to bridge."""
         import os
+
+        # Track which downloads we're monitoring (virtual_path -> track_id)
+        monitored_downloads = {}
 
         while self.progress_running:
             try:
@@ -634,6 +659,15 @@ class Plugin(BasePlugin):
 
                 # Get all active transfers
                 transfers = self.core.downloads.transfers
+                current_paths = set(transfers.keys())
+
+                # Detect removed downloads (were monitored but no longer in transfers)
+                removed_paths = set(monitored_downloads.keys()) - current_paths
+                for removed_path in removed_paths:
+                    track_id = monitored_downloads.pop(removed_path, None)
+                    if track_id:
+                        # Notify bridge to remove progress bar
+                        self._remove_progress_tracking(track_id)
 
                 for virtual_path, transfer in transfers.items():
                     try:
@@ -675,6 +709,9 @@ class Plugin(BasePlugin):
                         # Fallback: generate track ID from filename
                         if not track_id:
                             track_id = filename.replace(' ', '').replace('-', '')[:20]
+
+                        # Track this download so we can detect when it's removed
+                        monitored_downloads[virtual_path] = track_id
 
                         # Send progress update to bridge
                         self._send_progress_update(track_id, filename, progress, bytes_downloaded, total_bytes)

@@ -508,56 +508,60 @@
       color: #6a9fb5;
     }
 
-    /* Console wrapper with progress bars on the right */
-    .console-wrapper {
-      display: flex;
-      gap: 8px;
-      min-height: 100px;
+    /* Progress section above Activity Log */
+    .progress-section {
+      height: 50px;
+      background: #1a1a1a;
+      border: 1px solid #282828;
+      border-radius: 6px;
+      margin-bottom: 12px;
+      overflow: hidden;
+      display: none; /* Hidden by default, shown when downloads active */
     }
 
-    .console-content {
-      flex: 1;
-      min-width: 0; /* Allow text truncation */
+    .progress-section.active {
+      display: block;
     }
 
-    /* Vertical progress bars container */
+    /* Horizontal progress bars container */
     .progress-bars-container {
       display: flex;
-      gap: 6px;
-      align-items: flex-end;
-      padding: 8px;
-      min-width: 0;
+      flex-direction: column;
+      gap: 4px;
+      padding: 4px;
+      height: 100%;
+      justify-content: center;
     }
 
-    /* Individual vertical progress bar - ultra minimalistic */
-    .vertical-progress-bar {
-      width: 4px;
-      height: 100px;
-      background: #1a1a1a;
+    /* Individual horizontal progress bar - ultra minimalistic */
+    .horizontal-progress-bar {
+      width: 100%;
+      height: 4px;
+      background: #0a0a0a;
       position: relative;
-      animation: slideInRight 0.2s ease;
+      animation: slideInDown 0.2s ease;
       transition: opacity 0.3s ease;
     }
 
-    @keyframes slideInRight {
+    @keyframes slideInDown {
       from {
         opacity: 0;
-        transform: translateX(10px);
+        transform: translateY(-10px);
       }
       to {
         opacity: 1;
-        transform: translateX(0);
+        transform: translateY(0);
       }
     }
 
-    /* Vertical fill (grows from bottom) - absolute positioning */
-    .progress-bar-fill-vertical {
+    /* Fill for horizontal bar - grows from left */
+    .progress-bar-fill-horizontal {
       position: absolute;
-      bottom: 0;
       left: 0;
-      width: 100%;
+      top: 0;
+      height: 100%;
       background: #B9FF37;
-      transition: height 0.3s ease;
+      transition: width 0.3s ease;
     }
 
   </style>
@@ -611,16 +615,19 @@ $$$$$$$ ` $$$$$$ ;$$$$;  $$$$l$$$$;  $$$$;   $$$$     $$$$;   $$$$$$~  :$$$$$$$$
         </button>
       </div>
     </div>
+    <!-- Progress Bars Section -->
+    <div id="progressSection" class="progress-section">
+      <div id="progressBarsContainer" class="progress-bars-container">
+        <!-- Horizontal progress bars will be inserted here -->
+      </div>
+    </div>
+
+    <!-- Activity Log Section -->
     <div id="consoleContainer" class="console-container">
-      <div class="console-wrapper">
-        <div id="consoleContent" class="console-content">
-          <div class="console-entry console-info">
-            <span class="console-time">--:--:--</span>
-            <span class="console-message">Waiting for events...</span>
-          </div>
-        </div>
-        <div id="progressBarsContainer" class="progress-bars-container">
-          <!-- Vertical progress bars will be inserted here -->
+      <div id="consoleContent" class="console-content">
+        <div class="console-entry console-info">
+          <span class="console-time">--:--:--</span>
+          <span class="console-message">Waiting for events...</span>
         </div>
       </div>
     </div>
