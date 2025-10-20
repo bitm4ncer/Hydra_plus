@@ -1210,18 +1210,9 @@ class Plugin(BasePlugin):
 
             self.log(f"[Hydra+: ALBUM] ✓ Matched {len(tracks_to_download)}/{len(search_info['tracks'])} tracks")
 
-            # CRITICAL: Create album folder FIRST (before any downloads)
-            # This prevents orphaned files if server crashes during processing
-            download_dir = self._get_download_directory(tracks_to_download[0])
-            if download_dir:
-                album_folder = self._ensure_album_folder(search_info, download_dir)
-                if album_folder:
-                    search_info['album_folder_path'] = album_folder
-                    self.log(f"[Hydra+: ALBUM] ✓ Album folder ready: {os.path.basename(album_folder)}")
-                else:
-                    self.log(f"[Hydra+: ALBUM] ⚠ Could not create album folder, continuing anyway...")
-            else:
-                self.log(f"[Hydra+: ALBUM] ⚠ Could not determine download directory")
+            # CHANGE: Don't create album folder yet - we'll create it after first track downloads
+            # This way we can extract the download directory from the actual download path
+            search_info['album_folder_created'] = False
 
             self.log(f"[Hydra+: ALBUM] Starting track 1/{len(tracks_to_download)}...")
 
@@ -1837,6 +1828,22 @@ class Plugin(BasePlugin):
 
             self.log(f"[Hydra+: ALBUM] ✓ Track {current_index + 1}/{len(tracks_to_download)} downloaded: {track_info['track']}")
 
+            # CRITICAL: Create album folder after first track downloads (not before)
+            # This way we can extract the download directory from the actual download path
+            if not search_info.get('album_folder_created', False):
+                import os
+                download_dir = os.path.dirname(real_path)
+                self.log(f"[Hydra+: ALBUM] Extracted download directory from first track: {download_dir}")
+
+                album_folder = self._ensure_album_folder(search_info, download_dir)
+                if album_folder:
+                    search_info['album_folder_path'] = album_folder
+                    search_info['album_folder_created'] = True
+                    self.log(f"[Hydra+: ALBUM] ✓ Album folder created: {os.path.basename(album_folder)}")
+                else:
+                    self.log(f"[Hydra+: ALBUM] ⚠ Could not create album folder, continuing anyway...")
+                    search_info['album_folder_created'] = True  # Mark as attempted to avoid retries
+
             # CRITICAL CHANGE: Process metadata and move to folder IMMEDIATELY
             # Don't wait for all downloads to complete - process each track right away
             # This prevents batch processing pile-up that causes server crashes
@@ -1878,10 +1885,12 @@ class Plugin(BasePlugin):
                 self.log(f"[Hydra+: ALBUM] ⚠ Unsupported format, skipping metadata: {real_path}")
                 return
 
-            # Get album folder path (created upfront)
+            # Get album folder path (created after first download)
             album_folder_path = search_info.get('album_folder_path')
             if not album_folder_path:
                 self.log(f"[Hydra+: ALBUM] ⚠ No album folder path, processing without move")
+            else:
+                self.log(f"[Hydra+: ALBUM] Album folder: {os.path.basename(album_folder_path)}")
 
             self.log(f"[Hydra+: ALBUM] Processing track {track_index + 1} metadata...")
 
@@ -1895,7 +1904,10 @@ class Plugin(BasePlugin):
             )
 
             if success:
-                self.log(f"[Hydra+: ALBUM] ✓ Track {track_index + 1} complete: {os.path.basename(new_path)}")
+                if album_folder_path:
+                    self.log(f"[Hydra+: ALBUM] ✓ Track {track_index + 1} moved to album: {os.path.basename(new_path)}")
+                else:
+                    self.log(f"[Hydra+: ALBUM] ✓ Track {track_index + 1} complete: {os.path.basename(new_path)}")
             else:
                 self.log(f"[Hydra+: ALBUM] ✗ Track {track_index + 1} failed metadata processing")
 
@@ -2071,8 +2083,7 @@ class Plugin(BasePlugin):
             ])
 
             if is_server_crash:
-                self.log(f"[Hydra+: ALBUM-META] ✗ SERVER CRASH DETECTED: {e}")
-                self.log(f"[Hydra+: ALBUM-META] Waiting for server to restart...")
+                self.log(f"[Hydra+: ALBUM-META] Server restarting, will retry...")
 
                 # Wait for server to restart (up to 30 seconds)
                 max_wait = 30
@@ -2124,7 +2135,7 @@ class Plugin(BasePlugin):
 
                                 # File doesn't exist in any form, try retry
                                 self.log(f"[Hydra+: ALBUM-META] Retrying failed track: {os.path.basename(file_path)}")
-                                return self._process_single_track_metadata(file_path, track_info, token, track_index)
+                                return self._process_single_track_metadata(file_path, track_info, token, track_index, target_folder)
                     except:
                         pass  # Server not ready yet, continue waiting
 
@@ -2148,8 +2159,7 @@ class Plugin(BasePlugin):
             ])
 
             if is_server_crash:
-                self.log(f"[Hydra+: ALBUM-META] ✗ SERVER CRASH DETECTED: {e}")
-                self.log(f"[Hydra+: ALBUM-META] Waiting for server to restart...")
+                self.log(f"[Hydra+: ALBUM-META] Server restarting, will retry...")
 
                 # Wait for server to restart (up to 30 seconds)
                 max_wait = 30
@@ -2201,7 +2211,7 @@ class Plugin(BasePlugin):
 
                                 # File doesn't exist in any form, try retry
                                 self.log(f"[Hydra+: ALBUM-META] Retrying failed track: {os.path.basename(file_path)}")
-                                return self._process_single_track_metadata(file_path, track_info, token, track_index)
+                                return self._process_single_track_metadata(file_path, track_info, token, track_index, target_folder)
                     except:
                         pass  # Server not ready yet, continue waiting
 
@@ -2731,10 +2741,8 @@ class Plugin(BasePlugin):
                 # Check if server is running and auto-restart if it went offline
                 server_running = self._is_server_running()
                 if self.server_was_running and not server_running:
-                    # Server went offline - attempt auto-restart
-                    self.log("════════════════════════════════════════════════════════════════")
-                    self.log("  ⚠️  Bridge server went offline - attempting auto-restart...")
-                    self.log("════════════════════════════════════════════════════════════════")
+                    # Server went offline - attempt auto-restart (normal during metadata processing)
+                    self.log("[Hydra+] Bridge server restarting...")
                     self.server_was_running = False
 
                     # Attempt to restart the server
