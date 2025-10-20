@@ -640,10 +640,10 @@ resetServerBtn.addEventListener('click', async () => {
 
 // Example data for preview
 const previewData = {
-  artist: 'Iron Maiden',
-  track: 'The Trooper',
-  album: 'Piece of Mind',
-  year: '1983',
+  artist: 'Prince',
+  track: 'Purple Rain',
+  album: 'Purple Rain',
+  year: '1984',
   trackNum: '01'
 };
 
