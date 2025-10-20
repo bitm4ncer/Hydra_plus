@@ -48,6 +48,32 @@ function parseDuration(durationText) {
 }
 
 /**
+ * Remove remaster/deluxe/edition suffixes from track/album names
+ * Examples:
+ *   "The Trooper - 2015 Remaster" -> "The Trooper"
+ *   "Fear of the Dark - 2015 Remastered" -> "Fear of the Dark"
+ *   "Album Name (Deluxe Edition)" -> "Album Name"
+ */
+function stripVersionSuffixes(text) {
+  if (!text) return text;
+
+  // Pattern matches common suffixes:
+  // - Remaster/Remastered with optional year
+  // - Deluxe/Special/Limited Edition variants
+  // - Live/Acoustic/Radio Edit versions
+  // Handles both " - " and " (" separators
+  const pattern = /\s*[-(\[]\s*(
+    \d{4}\s+(Remaster(ed)?|Edition)|  # 2015 Remaster, 2015 Edition
+    Remaster(ed)?(\s+\d{4})?|          # Remastered, Remaster 2015
+    (Deluxe|Special|Limited|Expanded|Collector'?s)\s+(Edition|Version)|
+    (Live|Acoustic|Radio|Single|Album)\s+(Version|Edit|Mix)|
+    Bonus\s+Track\s+Version
+  ).*$/ix;
+
+  return text.replace(pattern, '').trim();
+}
+
+/**
  * Extract artist, track name, album name, track ID, and duration from a track row element
  */
 function getTrackInfo(trackRow) {
@@ -67,7 +93,7 @@ function getTrackInfo(trackRow) {
 
     if (!trackNameElement) return null;
 
-    const trackName = trackNameElement.textContent.trim();
+    const trackName = stripVersionSuffixes(trackNameElement.textContent.trim());
 
     // Find artist name - try both structures
     let artistElement = null;
@@ -106,7 +132,7 @@ function getTrackInfo(trackRow) {
     }
 
     if (albumElement) {
-      albumName = albumElement.textContent.trim();
+      albumName = stripVersionSuffixes(albumElement.textContent.trim());
       console.log('[Track Info] Found album:', albumName);
     } else {
       console.log('[Track Info] No album link found in track row');
@@ -371,7 +397,7 @@ function getAlbumInfo() {
       return null;
     }
 
-    const albumName = albumTitleElement.textContent.trim();
+    const albumName = stripVersionSuffixes(albumTitleElement.textContent.trim());
     console.log('[Album Info] Extracted album name:', albumName);
 
     // Find album artist - look in the metadata section near the album title

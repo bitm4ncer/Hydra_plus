@@ -212,15 +212,20 @@ class Plugin(BasePlugin):
             # Start the Node.js server in the background
             # Use CREATE_NO_WINDOW flag on Windows to hide console window
             startupinfo = None
+            creationflags = 0
             if os.name == 'nt':  # Windows
                 startupinfo = subprocess.STARTUPINFO()
                 startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+                startupinfo.wShowWindow = subprocess.SW_HIDE
+                # CREATE_NO_WINDOW flag prevents console window from appearing
+                creationflags = 0x08000000  # CREATE_NO_WINDOW
 
             self.server_process = subprocess.Popen(
                 ['node', self.server_path],
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
-                startupinfo=startupinfo
+                startupinfo=startupinfo,
+                creationflags=creationflags
             )
 
             self.log("[Hydra+] Bridge server process started, will verify in background")
@@ -1336,8 +1341,14 @@ class Plugin(BasePlugin):
 
         # Helper function to normalize text for flexible matching
         def normalize_for_matching(text):
-            """Normalize text for flexible matching - handles underscores, dots, etc."""
+            """Normalize text for flexible matching - handles underscores, dots, remaster suffixes, etc."""
             import re
+
+            # Strip version suffixes (Remaster, Deluxe Edition, etc.) BEFORE other normalization
+            # This matches patterns like "- 2015 Remaster", "(Deluxe Edition)", "[Live Version]", etc.
+            suffix_pattern = r'\s*[-(\[]\s*(\d{4}\s+(Remaster(ed)?|Edition)|Remaster(ed)?(\s+\d{4})?|(Deluxe|Special|Limited|Expanded|Collector\'?s)\s+(Edition|Version)|(Live|Acoustic|Radio|Single|Album)\s+(Version|Edit|Mix)|Bonus\s+Track\s+Version).*$'
+            text = re.sub(suffix_pattern, '', text, flags=re.IGNORECASE)
+
             # Replace underscores, dots, dashes with spaces
             text = text.replace('_', ' ').replace('.', ' ').replace('-', ' ')
             # Remove parentheses and brackets
