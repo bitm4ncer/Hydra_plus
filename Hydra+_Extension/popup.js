@@ -149,8 +149,19 @@ function addConsoleEvent(type, message, timestamp = null, trackId = null) {
 // Load console events from storage
 function loadConsoleEvents() {
   chrome.storage.local.get(['consoleEvents'], (data) => {
+    console.log('[Hydra+ Popup] Loading console events:', {
+      hasEvents: !!data.consoleEvents,
+      eventCount: data.consoleEvents ? data.consoleEvents.length : 0
+    });
+
     if (data.consoleEvents && data.consoleEvents.length > 0) {
       consoleEvents = data.consoleEvents;
+
+      console.log('[Hydra+ Popup] Sample events:', data.consoleEvents.slice(-3).map(e => ({
+        type: e.type,
+        message: e.message.substring(0, 40),
+        time: e.time
+      })));
 
       // Clear placeholder
       consoleContent.innerHTML = '';
@@ -173,8 +184,12 @@ function loadConsoleEvents() {
         consoleContent.appendChild(entry);
       });
 
+      console.log('[Hydra+ Popup] Rendered', consoleEvents.length, 'events to DOM');
+
       // Auto-scroll to bottom
       consoleContent.scrollTop = consoleContent.scrollHeight;
+    } else {
+      console.log('[Hydra+ Popup] No events in storage');
     }
   });
 }
@@ -269,6 +284,12 @@ loadConsoleEvents();
 // Listen for storage changes to update console in real-time
 chrome.storage.onChanged.addListener((changes, namespace) => {
   if (namespace === 'local' && changes.consoleEvents) {
+    console.log('[Hydra+ Popup] Storage changed - consoleEvents updated');
+    console.log('[Hydra+ Popup] New value:', {
+      hasNewValue: !!changes.consoleEvents.newValue,
+      newCount: changes.consoleEvents.newValue ? changes.consoleEvents.newValue.length : 0,
+      oldCount: changes.consoleEvents.oldValue ? changes.consoleEvents.oldValue.length : 0
+    });
     // Events were updated by background.js - reload them
     loadConsoleEvents();
   }

@@ -557,32 +557,49 @@ class Plugin(BasePlugin):
             message: Event message
             track_id: Optional track ID for color-coding
         """
-        try:
-            import json
-            from urllib.request import Request, urlopen
-            from urllib.error import URLError
+        import json
+        from urllib.request import Request, urlopen
+        from urllib.error import URLError
+        import time
 
-            bridge_url = self.settings.get('bridge_url', 'http://127.0.0.1:3847')
-            url = f"{bridge_url}/event"
+        bridge_url = self.settings.get('bridge_url', 'http://127.0.0.1:3847')
+        url = f"{bridge_url}/event"
 
-            data = {
-                'type': event_type,
-                'message': message,
-                'trackId': track_id
-            }
+        data = {
+            'type': event_type,
+            'message': message,
+            'trackId': track_id
+        }
 
-            req = Request(url,
-                         data=json.dumps(data).encode('utf-8'),
-                         headers={'Content-Type': 'application/json'},
-                         method='POST')
+        # IMPROVED: Retry logic with increased timeout
+        max_retries = 3
+        timeout_seconds = 2.0  # Increased from 0.5s to 2s
 
-            # Non-blocking - don't wait for response
-            urlopen(req, timeout=0.5)
-            # Debug: confirm event was sent
-            self.log(f"[Hydra+: EVENT] ✓ Sent to bridge: {message[:50]}")
-        except Exception as e:
-            # Debug: log errors temporarily
-            self.log(f"[Hydra+: EVENT] ✗ Failed to send event: {e}")
+        for attempt in range(max_retries):
+            try:
+                req = Request(url,
+                             data=json.dumps(data).encode('utf-8'),
+                             headers={'Content-Type': 'application/json'},
+                             method='POST')
+
+                # Try to send event
+                urlopen(req, timeout=timeout_seconds)
+
+                # Success - log and exit
+                if attempt > 0:
+                    self.log(f"[Hydra+: EVENT] ✓ Sent to bridge (attempt {attempt + 1}): {message[:50]}")
+                return True
+
+            except Exception as e:
+                # If this was the last attempt, log the error
+                if attempt == max_retries - 1:
+                    self.log(f"[Hydra+: EVENT] ✗ Failed to send event after {max_retries} attempts: {e}")
+                    self.log(f"[Hydra+: EVENT] Lost event: [{event_type}] {message[:50]}")
+                else:
+                    # Wait a bit before retrying (exponential backoff)
+                    time.sleep(0.1 * (attempt + 1))
+
+        return False
 
     def _send_progress_update(self, track_id, filename, progress, bytes_downloaded, total_bytes):
         """Send download progress update to bridge server.

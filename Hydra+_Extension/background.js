@@ -3,11 +3,13 @@ const POLL_INTERVAL = 3000; // Poll every 3 seconds
 
 let lastEventId = 0;
 let pollInterval = null;
+let serverWasOffline = false; // Track server state to detect restarts
 
 // Load last event ID from storage
 chrome.storage.local.get(['lastEventId'], (data) => {
   if (data.lastEventId) {
     lastEventId = data.lastEventId;
+    console.log('[Hydra+ BG] Loaded lastEventId from storage:', lastEventId);
   }
 });
 
@@ -22,10 +24,32 @@ async function pollEvents() {
     if (response.ok) {
       const data = await response.json();
 
+      // CRITICAL FIX: Detect server restart by checking if event IDs decreased
+      // If server restarted, eventIdCounter resets to 0, so we need to reset our tracking
+      if (data.events && Array.isArray(data.events) && data.events.length > 0) {
+        const maxServerEventId = Math.max(...data.events.map(e => e.id));
+
+        // If server came back online OR if event IDs went backwards (server restart)
+        if (serverWasOffline || (maxServerEventId < lastEventId && maxServerEventId < 10)) {
+          console.log('[Hydra+ BG] Server restart detected! Resetting lastEventId');
+          console.log('[Hydra+ BG] Old lastEventId:', lastEventId, 'New max server ID:', maxServerEventId);
+          lastEventId = 0; // Reset to catch all new events
+          chrome.storage.local.set({ lastEventId: 0 });
+          serverWasOffline = false;
+        }
+      }
+
       // Process events if provided by server
       if (data.events && Array.isArray(data.events)) {
         // Filter out events we've already seen
         const newEvents = data.events.filter(event => event.id > lastEventId);
+
+        console.log('[Hydra+ BG] Poll result:', {
+          totalEvents: data.events.length,
+          newEvents: newEvents.length,
+          lastEventId: lastEventId,
+          serverEventIds: data.events.map(e => e.id).join(', ')
+        });
 
         if (newEvents.length > 0) {
           // Update last event ID
@@ -47,6 +71,12 @@ async function pollEvents() {
               const time = event.timestamp ? new Date(event.timestamp) : new Date();
               const timeStr = time.toLocaleTimeString('en-US', { hour12: false });
 
+              console.log('[Hydra+ BG] Adding event to storage:', {
+                id: event.id,
+                type: event.type,
+                message: event.message.substring(0, 50)
+              });
+
               consoleEvents.push({
                 type: event.type || 'info',
                 message: event.message,
@@ -64,6 +94,7 @@ async function pollEvents() {
 
             // Save back to storage
             chrome.storage.local.set({ consoleEvents: consoleEvents });
+            console.log('[Hydra+ BG] Saved', consoleEvents.length, 'events to storage');
           });
         }
       }
@@ -75,7 +106,11 @@ async function pollEvents() {
       }
     }
   } catch (error) {
-    // Silently fail if server is offline
+    // Server is offline
+    if (!serverWasOffline) {
+      console.log('[Hydra+ BG] Server went offline');
+      serverWasOffline = true;
+    }
   }
 }
 
