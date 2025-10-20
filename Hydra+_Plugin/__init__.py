@@ -617,9 +617,13 @@ class Plugin(BasePlugin):
 
             # FIRE-AND-FORGET: Very short timeout since bridge responds instantly
             urlopen(req, timeout=0.3)
-        except Exception:
-            # Silently fail - don't spam logs if bridge is offline
-            pass
+        except Exception as e:
+            # Log errors for debugging (only log every 10th error to avoid spam)
+            if not hasattr(self, '_progress_error_count'):
+                self._progress_error_count = 0
+            self._progress_error_count += 1
+            if self._progress_error_count % 10 == 1:
+                self.log(f"[Hydra+: PROGRESS] ⚠ Bridge connection error: {str(e)[:50]}")
 
     def _remove_progress_tracking(self, track_id):
         """Remove download from bridge server's progress tracking when download is deleted."""
@@ -647,6 +651,8 @@ class Plugin(BasePlugin):
         """Background thread to monitor active download progress and send updates to bridge."""
         import os
 
+        self.log("[Hydra+: PROGRESS] Progress monitoring thread started")
+
         # Track which downloads we're monitoring (virtual_path -> track_id)
         monitored_downloads = {}
 
@@ -673,9 +679,26 @@ class Plugin(BasePlugin):
                 for removed_path in removed_paths:
                     track_id = monitored_downloads.pop(removed_path, None)
                     if track_id:
-                        # Notify bridge to remove progress bar
-                        self._remove_progress_tracking(track_id)
-                        self.log(f"[Hydra+: PROGRESS] Download removed: trackId={track_id}")
+                        # DON'T notify bridge to remove - let completion handler send 100% update
+                        # The bridge will auto-cleanup after 60 seconds
+                        # self._remove_progress_tracking(track_id)
+                        self.log(f"[Hydra+: PROGRESS] Download finished from monitoring: trackId={track_id}")
+
+                # DEBUG: Log monitoring cycle
+                if len(transfers) > 0:
+                    active_count = sum(1 for vp in transfers.keys() if vp in self.active_downloads)
+                    self.log(f"[Hydra+: PROGRESS] Monitoring {len(transfers)} transfers ({active_count} tracked)")
+
+                    # DEBUG: Show what paths we're seeing vs. what we're tracking
+                    if active_count == 0 and len(self.active_downloads) > 0:
+                        transfer_paths = list(transfers.keys())[:2]  # Show first 2
+                        tracked_paths = list(self.active_downloads.keys())[:2]  # Show first 2
+                        # CRITICAL: Show FULL paths to understand format mismatch
+                        self.log(f"[Hydra+: PROGRESS] === PATH MISMATCH DEBUG ===")
+                        for i, tp in enumerate(transfer_paths):
+                            self.log(f"[Hydra+: PROGRESS] Transfer path {i+1}: {repr(tp)}")
+                        for i, tp in enumerate(tracked_paths):
+                            self.log(f"[Hydra+: PROGRESS] Tracked path {i+1}: {repr(tp)}")
 
                 for virtual_path, transfer in transfers.items():
                     try:
@@ -690,7 +713,13 @@ class Plugin(BasePlugin):
 
                         # Skip downloads that are no longer in our active tracking
                         if virtual_path not in self.active_downloads:
+                            # DEBUG: Log why we're skipping
+                            if len(self.active_downloads) > 0:
+                                self.log(f"[Hydra+: PROGRESS] ⚠ Skipping untracked: {virtual_path[:60]}")
                             continue
+
+                        # DEBUG: Found a match!
+                        self.log(f"[Hydra+: PROGRESS] ✓ MATCH FOUND: {virtual_path[:60]}")
 
                         # Get progress data
                         total_bytes = transfer.size
@@ -723,6 +752,9 @@ class Plugin(BasePlugin):
 
                         # Send progress update to bridge
                         self._send_progress_update(track_id, filename, progress, bytes_downloaded, total_bytes)
+
+                        # Log ALL progress updates for debugging
+                        self.log(f"[Hydra+: PROGRESS] {filename[:40]}: {int(progress)}% (ID: {track_id})")
 
                     except Exception as e:
                         # Skip this transfer if there's an error
@@ -1253,7 +1285,10 @@ class Plugin(BasePlugin):
             search_info['last_download_user'] = candidate['user']  # Store username for abort
 
             # Track this download for monitoring
-            self.active_downloads[candidate['file']] = token
+            # CRITICAL: Use the same key format as Nicotine+ transfers dictionary: username + virtual_path
+            transfer_key = candidate['user'] + candidate['file']
+            self.active_downloads[transfer_key] = token
+            self.log(f"[Hydra+: PROGRESS] ✓ Tracking download: {transfer_key[:80]} (token={token})")
 
             # Don't log success - the download starting message is enough
 
@@ -1825,7 +1860,9 @@ class Plugin(BasePlugin):
             )
 
             # Track this download
-            self.active_downloads[track_to_download['file_path']] = token
+            # CRITICAL: Use the same key format as Nicotine+ transfers dictionary: username + virtual_path
+            transfer_key = track_to_download['user'] + track_to_download['file_path']
+            self.active_downloads[transfer_key] = token
             search_info['download_started_at'] = time.time()
 
         except Exception as e:
@@ -2041,12 +2078,15 @@ class Plugin(BasePlugin):
             real_path: Local filesystem path where file was saved
         """
         try:
+            # CRITICAL: Use the same key format as we stored: username + virtual_path
+            transfer_key = user + virtual_path
+
             # Check if this download is tracked
-            if virtual_path not in self.active_downloads:
+            if transfer_key not in self.active_downloads:
                 return
 
             # Get search token and metadata
-            token = self.active_downloads[virtual_path]
+            token = self.active_downloads[transfer_key]
 
             if token not in self.active_searches:
                 return
@@ -2057,10 +2097,21 @@ class Plugin(BasePlugin):
             if not search_info.get('auto_download', False):
                 return
 
-            # Send event to bridge for popup console
+            # Send final 100% progress update before completion event
             track_id_safe = search_info.get('track_id', '') or f"{search_info.get('artist', '')}-{search_info.get('track', '')}".replace(' ', '')[:20]
             import os
             filename = os.path.basename(real_path)
+
+            # Send 100% progress to show completion in progress bar
+            self._send_progress_update(track_id_safe, filename, 100, 0, 0)
+            self.log(f"[Hydra+: PROGRESS] ✓ Download complete at 100%: {filename[:40]}")
+
+            # Remove from active tracking NOW so monitoring thread stops tracking it
+            if transfer_key in self.active_downloads:
+                del self.active_downloads[transfer_key]
+                self.log(f"[Hydra+: PROGRESS] Removed from tracking: {filename[:40]}")
+
+            # Send event to bridge for popup console
             self._send_event_to_bridge('success', f"Downloaded: {filename}", track_id_safe)
 
             search_type = search_info.get('type', 'track')
@@ -2098,8 +2149,10 @@ class Plugin(BasePlugin):
         )
         thread.start()
 
-        # Clean up tracking
-        del self.active_downloads[virtual_path]
+        # IMPORTANT: Don't delete from active_downloads immediately!
+        # Let the progress monitoring thread detect completion and clean up after showing 100%
+        # The monitoring thread will handle cleanup via _remove_progress_tracking
+        # del self.active_downloads[virtual_path]  # DISABLED - let progress monitoring handle cleanup
         del self.active_searches[token]
 
     def _handle_album_track_completion(self, token, search_info, virtual_path, real_path):
@@ -2143,8 +2196,9 @@ class Plugin(BasePlugin):
             )
             thread.start()
 
-        # Clean up download tracking
-        del self.active_downloads[virtual_path]
+        # IMPORTANT: Don't delete from active_downloads immediately!
+        # Let progress monitoring thread show 100% completion before cleanup
+        # del self.active_downloads[virtual_path]  # DISABLED - let progress monitoring handle cleanup
 
         # Move to next track
         search_info['current_track_index'] += 1

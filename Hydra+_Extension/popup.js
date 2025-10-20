@@ -21,7 +21,7 @@ const saveCredentialsBtn = document.getElementById('saveCredentials');
 const savedIndicator = document.getElementById('savedIndicator');
 const apiErrorIndicator = document.getElementById('apiErrorIndicator');
 const resetServerBtn = document.getElementById('resetServerBtn');
-const consoleContainer = document.getElementById('consoleContainer');
+const consoleContainer = document.getElementById('consoleContainerInner');
 const consoleContent = document.getElementById('consoleContent');
 const toggleConsoleBtn = document.getElementById('toggleConsoleBtn');
 const clearConsoleBtn = document.getElementById('clearConsoleBtn');
@@ -35,6 +35,8 @@ const fileNamingContainer = document.getElementById('fileNamingContainer');
 const toggleFileNamingBtn = document.getElementById('toggleFileNamingBtn');
 const progressBarsContainer = document.getElementById('progressBarsContainer');
 const progressSection = document.getElementById('progressSection');
+const downloadMetadataSettings = document.getElementById('downloadMetadataSettings');
+const toggleDownloadMetadataBtn = document.getElementById('toggleDownloadMetadataBtn');
 
 // Console management
 const MAX_CONSOLE_ENTRIES = 50;
@@ -142,6 +144,11 @@ function addConsoleEvent(type, message, timestamp = null, trackId = null) {
   // Auto-scroll to bottom
   consoleContent.scrollTop = consoleContent.scrollHeight;
 
+  // IMPORTANT: Detect "Downloading:" events and create progress bar immediately
+  if (type === 'info' && message.startsWith('Downloading:') && trackId) {
+    createInitialProgressBar(trackId, message);
+  }
+
   // Store in chrome.storage.local for persistence (with error handling)
   safeStorageSet({ consoleEvents: consoleEvents });
 }
@@ -182,6 +189,11 @@ function loadConsoleEvents() {
           <span class="console-message"${messageStyle}>${event.message}</span>
         `;
         consoleContent.appendChild(entry);
+
+        // IMPORTANT: Create initial progress bars for "Downloading:" events
+        if (event.type === 'info' && event.message.startsWith('Downloading:') && event.trackId) {
+          createInitialProgressBar(event.trackId, event.message);
+        }
       });
 
       console.log('[Hydra+ Popup] Rendered', consoleEvents.length, 'events to DOM');
@@ -233,13 +245,6 @@ toggleConsoleBtn.addEventListener('click', () => {
   const isCollapsed = consoleContainer.classList.toggle('collapsed');
   toggleConsoleBtn.textContent = isCollapsed ? 'Show' : 'Hide';
 
-  // Add accent color when showing "Show"
-  if (isCollapsed) {
-    toggleConsoleBtn.classList.add('toggle-show');
-  } else {
-    toggleConsoleBtn.classList.remove('toggle-show');
-  }
-
   // Save preference
   safeStorageSet({ consoleCollapsed: isCollapsed });
 });
@@ -249,7 +254,6 @@ chrome.storage.local.get(['consoleCollapsed'], (data) => {
   if (data.consoleCollapsed) {
     consoleContainer.classList.add('collapsed');
     toggleConsoleBtn.textContent = 'Show';
-    toggleConsoleBtn.classList.add('toggle-show');
   }
 });
 
@@ -278,6 +282,31 @@ chrome.storage.local.get(['fileNamingCollapsed'], (data) => {
   }
 });
 
+// Toggle download metadata section visibility
+toggleDownloadMetadataBtn.addEventListener('click', () => {
+  const isCollapsed = downloadMetadataSettings.classList.toggle('collapsed');
+  toggleDownloadMetadataBtn.textContent = isCollapsed ? 'Show' : 'Hide';
+
+  // Add accent color when showing "Show"
+  if (isCollapsed) {
+    toggleDownloadMetadataBtn.classList.add('toggle-show');
+  } else {
+    toggleDownloadMetadataBtn.classList.remove('toggle-show');
+  }
+
+  // Save preference
+  safeStorageSet({ downloadMetadataCollapsed: isCollapsed });
+});
+
+// Load download metadata collapse state
+chrome.storage.local.get(['downloadMetadataCollapsed'], (data) => {
+  if (data.downloadMetadataCollapsed) {
+    downloadMetadataSettings.classList.add('collapsed');
+    toggleDownloadMetadataBtn.textContent = 'Show';
+    toggleDownloadMetadataBtn.classList.add('toggle-show');
+  }
+});
+
 // Load console events on popup open
 loadConsoleEvents();
 
@@ -298,11 +327,14 @@ chrome.storage.onChanged.addListener((changes, namespace) => {
 // Load and display active download progress bars
 function loadActiveDownloads() {
   chrome.storage.local.get(['activeDownloads'], (data) => {
+    console.log('[Hydra+ DEBUG] loadActiveDownloads called, data:', data);
     if (data.activeDownloads && Object.keys(data.activeDownloads).length > 0) {
+      console.log('[Hydra+ DEBUG] Active downloads found:', Object.keys(data.activeDownloads).length);
       updateProgressBars(data.activeDownloads);
     } else {
-      // Clear any existing progress bars if no active downloads
-      clearProgressBars();
+      console.log('[Hydra+ DEBUG] No progress updates available (bars remain from events)');
+      // DO NOT clear bars - they are created from events and should persist
+      // Only update their heights when progress data arrives
     }
   });
 }
@@ -310,8 +342,47 @@ function loadActiveDownloads() {
 // Track completion times for auto-removal after 1 minute
 const completionTimes = new Map(); // trackId -> timestamp
 
-// Update horizontal progress bars in separate section above Activity Log
+// Create initial progress bar immediately when download starts (before progress updates arrive)
+function createInitialProgressBar(trackId, message) {
+  console.log('[Hydra+ PROGRESS] 🚀 Creating initial bar for trackId:', trackId);
+
+  // Check if bar already exists
+  const existingBar = progressBarsContainer.querySelector(`[data-track-id="${trackId}"]`);
+  if (existingBar) {
+    console.log('[Hydra+ PROGRESS] Bar already exists for:', trackId);
+    return; // Don't create duplicate
+  }
+
+  // Extract filename from message (e.g., "Downloading: Artist - Track (MP3)")
+  const filename = message.replace('Downloading:', '').trim();
+
+  // Get track color
+  const trackColor = getTrackColor(trackId);
+
+  // Create new vertical bar at minimal height (5%)
+  const barContainer = document.createElement('div');
+  barContainer.className = 'vertical-progress-bar';
+  barContainer.setAttribute('data-track-id', trackId);
+  barContainer.title = filename; // Tooltip shows filename on hover
+
+  // Create the fill element at 5% height
+  const fill = document.createElement('div');
+  fill.className = 'progress-bar-fill-vertical';
+  fill.style.height = '5%'; // Start at 5% as requested
+  fill.style.backgroundColor = trackColor || '#B9FF37';
+
+  barContainer.appendChild(fill);
+  progressBarsContainer.appendChild(barContainer);
+
+  console.log('[Hydra+ PROGRESS] ✓ Initial bar created at 5% for:', filename.substring(0, 30));
+}
+
+// Store completed downloads persistently (moved from completionTimes)
+let completedDownloads = new Map(); // trackId -> {filename, progress, filePath, completedAt, trackId}
+
+// Update vertical progress bars in separate section above Activity Log
 function updateProgressBars(activeDownloads) {
+  console.log('[Hydra+ PROGRESS] updateProgressBars called, downloads:', Object.keys(activeDownloads).length);
   const now = Date.now();
   let hasActiveBars = false;
 
@@ -319,27 +390,26 @@ function updateProgressBars(activeDownloads) {
   const activeTrackIds = new Set();
 
   for (const [trackId, progressData] of Object.entries(activeDownloads)) {
-    const { filename, progress, bytesDownloaded, totalBytes, lastUpdate } = progressData;
+    const { filename, progress, bytesDownloaded, totalBytes, lastUpdate, filePath } = progressData;
 
     // Check if download is complete
     const isComplete = progress >= 100;
 
-    // Track completion time
-    if (isComplete && !completionTimes.has(trackId)) {
-      completionTimes.set(trackId, now);
+    // Track completion - add to persistent completed downloads
+    if (isComplete && !completedDownloads.has(trackId)) {
+      completedDownloads.set(trackId, {
+        filename,
+        progress: 100,
+        filePath: filePath || null,
+        completedAt: now,
+        trackId: trackId
+      });
+      console.log('[Hydra+ PROGRESS] ✓ Download completed and saved:', filename?.substring(0, 30));
     }
 
-    // Remove completed downloads after 1 minute (60000ms)
-    if (isComplete && completionTimes.has(trackId)) {
-      const completionTime = completionTimes.get(trackId);
-      if (now - completionTime > 60000) {
-        completionTimes.delete(trackId);
-        continue; // Don't display this bar
-      }
-    }
-
-    // Skip if progress data is stale (no updates in 30 seconds and not complete)
-    if (!isComplete && lastUpdate && (now - lastUpdate) > 30000) {
+    // Don't auto-remove completed downloads - they stay until manually cleared
+    // Skip if progress data is stale (no updates in 5 minutes and not complete)
+    if (!isComplete && lastUpdate && (now - lastUpdate) > 300000) {
       continue;
     }
 
@@ -347,20 +417,41 @@ function updateProgressBars(activeDownloads) {
     hasActiveBars = true;
   }
 
+  // Also include all completed downloads in the display
+  for (const [trackId, completedData] of completedDownloads.entries()) {
+    activeTrackIds.add(trackId);
+    hasActiveBars = true;
+  }
+
   // Remove bars that are no longer active
-  const existingBars = progressBarsContainer.querySelectorAll('.horizontal-progress-bar');
+  const existingBars = progressBarsContainer.querySelectorAll('.vertical-progress-bar');
   existingBars.forEach(bar => {
     const trackId = bar.getAttribute('data-track-id');
     if (!activeTrackIds.has(trackId)) {
+      console.log('[Hydra+ PROGRESS] Removing bar for:', trackId);
       bar.remove();
     }
   });
 
-  // Update or create bars for active downloads
-  for (const [trackId, progressData] of Object.entries(activeDownloads)) {
-    if (!activeTrackIds.has(trackId)) continue;
+  // Update or create bars for active downloads and completed downloads
+  const allDownloads = new Map();
 
-    const { filename, progress } = progressData;
+  // Add active downloads
+  for (const [trackId, progressData] of Object.entries(activeDownloads)) {
+    if (activeTrackIds.has(trackId)) {
+      allDownloads.set(trackId, progressData);
+    }
+  }
+
+  // Add completed downloads (if not already in activeDownloads)
+  for (const [trackId, completedData] of completedDownloads.entries()) {
+    if (!allDownloads.has(trackId)) {
+      allDownloads.set(trackId, completedData);
+    }
+  }
+
+  for (const [trackId, progressData] of allDownloads.entries()) {
+    const { filename, progress, filePath } = progressData;
     const isComplete = progress >= 100;
 
     // Get track color
@@ -370,46 +461,87 @@ function updateProgressBars(activeDownloads) {
     let barContainer = progressBarsContainer.querySelector(`[data-track-id="${trackId}"]`);
 
     if (!barContainer) {
-      // Create new horizontal bar
+      // Create new vertical bar
+      console.log('[Hydra+ PROGRESS] Creating new bar for:', filename?.substring(0, 30), 'progress:', progress);
       barContainer = document.createElement('div');
-      barContainer.className = 'horizontal-progress-bar';
+      barContainer.className = 'vertical-progress-bar';
       barContainer.setAttribute('data-track-id', trackId);
-      barContainer.title = filename; // Tooltip shows filename on hover
 
-      // Create the fill element
+      // Store file path for future click-to-open feature
+      if (filePath) {
+        barContainer.setAttribute('data-file-path', filePath);
+      }
+
+      // Tooltip shows Track ID (as requested by user)
+      barContainer.title = `Track ID: ${trackId}`;
+
+      // Add click handler for future folder-open feature
+      barContainer.style.cursor = 'pointer';
+      barContainer.addEventListener('click', () => {
+        console.log('[Hydra+ PROGRESS] Bar clicked - Track ID:', trackId, 'File:', filePath || 'unknown');
+        // TODO: Implement folder open functionality
+        // Will need to send message to background script to open folder
+      });
+
+      // Create the fill element (grows from bottom)
       const fill = document.createElement('div');
-      fill.className = 'progress-bar-fill-horizontal';
-      fill.style.width = `${progress}%`;
+      fill.className = 'progress-bar-fill-vertical';
+      // Ensure minimum visibility (5% minimum)
+      const displayProgress = Math.max(5, progress);
+      fill.style.height = `${displayProgress}%`;
       fill.style.backgroundColor = trackColor || '#B9FF37';
+
+      // Add completed class if already at 100%
+      if (isComplete) {
+        barContainer.classList.add('completed');
+        fill.classList.add('completed');
+      }
 
       barContainer.appendChild(fill);
       progressBarsContainer.appendChild(barContainer);
     } else {
       // Update existing bar
-      const fill = barContainer.querySelector('.progress-bar-fill-horizontal');
+      const fill = barContainer.querySelector('.progress-bar-fill-vertical');
       if (fill) {
-        fill.style.width = `${progress}%`;
+        // Ensure minimum visibility (5% minimum)
+        const displayProgress = Math.max(5, progress);
+        fill.style.height = `${displayProgress}%`;
         fill.style.backgroundColor = trackColor || '#B9FF37';
+
+        // Add completed class when reaching 100%
+        if (isComplete) {
+          if (!barContainer.classList.contains('completed')) {
+            barContainer.classList.add('completed');
+            fill.classList.add('completed');
+          }
+        } else {
+          barContainer.classList.remove('completed');
+          fill.classList.remove('completed');
+        }
       }
 
-      // Update tooltip
-      barContainer.title = filename;
+      // Update tooltip and file path
+      barContainer.title = `Track ID: ${trackId}`;
+      if (filePath) {
+        barContainer.setAttribute('data-file-path', filePath);
+      }
     }
   }
 
-  // Show/hide progress section
-  if (!hasActiveBars) {
-    progressSection.classList.remove('active');
+  // Log progress bar status (section is always visible)
+  console.log('[Hydra+ PROGRESS] Active bars:', activeTrackIds.size);
+  if (activeTrackIds.size > 0) {
+    console.log('[Hydra+ PROGRESS] ✓ Showing', activeTrackIds.size, 'vertical progress bar(s)');
   } else {
-    progressSection.classList.add('active');
+    console.log('[Hydra+ PROGRESS] No active downloads - progress section empty');
   }
 }
 
-// Clear all progress bars
+// Clear all progress bars (section remains visible, just empty)
 function clearProgressBars() {
   progressBarsContainer.innerHTML = '';
-  progressSection.classList.remove('active');
   completionTimes.clear();
+  console.log('[Hydra+ PROGRESS] All progress bars cleared');
 }
 
 // Load active downloads on popup open
@@ -1132,3 +1264,22 @@ albumTrackPattern.addEventListener('input', () => {
 
 // Load patterns on startup
 loadPatterns();
+
+// Clear All Progress Bars button
+const clearProgressBtn = document.getElementById('clearProgressBtn');
+if (clearProgressBtn) {
+  clearProgressBtn.addEventListener('click', () => {
+    console.log('[Hydra+ PROGRESS] Clear All button clicked');
+
+    // Clear the completed downloads map
+    completedDownloads.clear();
+
+    // Remove all progress bars from DOM
+    const progressBarsContainer = document.getElementById('progressBarsContainer');
+    if (progressBarsContainer) {
+      progressBarsContainer.innerHTML = '';
+    }
+
+    console.log('[Hydra+ PROGRESS] ✓ All progress bars cleared');
+  });
+}

@@ -101,8 +101,15 @@ async function pollEvents() {
 
       // Process active downloads progress if provided by server
       if (data.activeDownloads) {
+        const downloadCount = Object.keys(data.activeDownloads).length;
+        console.log('[Hydra+ BG] Received activeDownloads from bridge:', downloadCount, 'downloads');
+        if (downloadCount > 0) {
+          console.log('[Hydra+ BG] Active downloads:', data.activeDownloads);
+        }
         // Store active downloads progress in storage
         chrome.storage.local.set({ activeDownloads: data.activeDownloads });
+      } else {
+        console.log('[Hydra+ BG] No activeDownloads in bridge response');
       }
     }
   } catch (error) {

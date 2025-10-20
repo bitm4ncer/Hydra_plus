@@ -38,3 +38,6 @@ yarn-error.log*
 # Temporary files
 *.tmp
 *.temp
+
+# Runtime queue data (server state)
+**/nicotine-queue.json

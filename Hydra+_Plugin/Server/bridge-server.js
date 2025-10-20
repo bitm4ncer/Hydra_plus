@@ -194,6 +194,11 @@ function updateDownloadProgress(trackId, filename, progress, bytesDownloaded, to
   const now = Date.now();
   const existingEntry = activeDownloads.get(trackId);
 
+  // DEBUG: Log when adding/updating
+  if (!existingEntry) {
+    console.log(`[Hydra+: PROGRESS] ✓ NEW download tracked: ${filename.substring(0, 40)} (ID: ${trackId})`);
+  }
+
   activeDownloads.set(trackId, {
     filename,
     progress,
@@ -202,6 +207,8 @@ function updateDownloadProgress(trackId, filename, progress, bytesDownloaded, to
     lastUpdate: now,
     completedAt: progress >= 100 ? (existingEntry?.completedAt || now) : null
   });
+
+  console.log(`[Hydra+: PROGRESS] activeDownloads size: ${activeDownloads.size}`);
 
   // Auto-remove completed downloads after 1 minute
   if (progress >= 100) {
@@ -586,6 +593,11 @@ const server = http.createServer((req, res) => {
       const activeDownloadsObj = {};
       for (const [trackId, progressData] of activeDownloads.entries()) {
         activeDownloadsObj[trackId] = progressData;
+      }
+
+      // DEBUG: Log when activeDownloads is not empty
+      if (Object.keys(activeDownloadsObj).length > 0) {
+        console.log(`[Hydra+: PROGRESS] Sending ${Object.keys(activeDownloadsObj).length} active downloads in /status response`);
       }
 
       res.writeHead(200, { 'Content-Type': 'application/json' });

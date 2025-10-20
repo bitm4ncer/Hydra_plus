@@ -16,7 +16,7 @@ $$$$$$$ ` $$$$$$ ;$$$$;  $$$$l$$$$;  $$$$;   $$$$     $$$$;   $$$$$$~  :$$$$$$$$
 
 
 ===============================================================================
-                             --- v0.1.6 ---
+                             --- v0.1.7 ---
 
           SPOTIFY → SOULSEEK BRIDGE  |  Multi-headed auto-download beast 
 
@@ -124,7 +124,7 @@ $$$$$$$ ` $$$$$$ ;$$$$;  $$$$l$$$$;  $$$$;   $$$$     $$$$;   $$$$$$~  :$$$$$$$$
   ╚══════════════════════════════════════════════════════════════════════════╝
 
   → Go to open.spotify.com
-  → Click ▶ button next to any track (orange = success, red = error)
+  → Click ▶ button next to any track (green = success, red = error)
   → Track auto-downloads in Nicotine+
   → Click extension icon for settings (auto-download, metadata, etc.)
 

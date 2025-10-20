@@ -112,8 +112,8 @@
     .slider:before {
       position: absolute;
       content: "";
-      height: 18px;
-      width: 18px;
+      height: 17px;
+      width: 17px;
       left: 3px;
       bottom: 3px;
       background-color: #121212;
@@ -163,6 +163,21 @@
 
     .status-indicator.offline {
       background-color: #e22134;
+    }
+
+    /* Clear progress button */
+    .clear-progress-btn {
+      transition: all 0.2s ease;
+    }
+
+    .clear-progress-btn:hover {
+      background: #B9FF37 !important;
+      color: #121212 !important;
+      border-color: #B9FF37 !important;
+    }
+
+    .clear-progress-btn:active {
+      transform: scale(0.95);
     }
 
     .input-group {
@@ -323,8 +338,8 @@
     }
 
     .toggle-small .slider:before {
-      height: 14px;
-      width: 14px;
+      height: 12px;
+      width: 12px;
       left: 2px;
       bottom: 2px;
       background-color: #121212;
@@ -359,14 +374,6 @@
 
 
 
-    #downloadMetadataSettings {
-      padding: 16px;
-      background: #1a1a1a;
-      border-radius: 8px;
-          border: 1px solid #121212;
-    box-shadow: inset 1px 1px 3px #000000, 0 1px 0 #474747;
-      margin-top: 16px;
-    }
 
     /* Console Styling */
     .console-container {
@@ -374,13 +381,19 @@
       border-radius: 6px;
       border: 1px solid #121212;
       box-shadow: inset 1px 1px 3px #000000, 0 1px 0 #474747;
-      max-height: 180px;
       overflow: hidden;
-      transition: max-height 0.3s ease;
     }
 
-    .console-container.collapsed {
+    .console-container-inner {
+      max-height: 180px;
+      overflow: hidden;
+      transition: max-height 0.3s ease, opacity 0.2s ease;
+      opacity: 1;
+    }
+
+    .console-container-inner.collapsed {
       max-height: 0;
+      opacity: 0;
     }
 
     /* Collapsible sections */
@@ -508,45 +521,54 @@
       color: #6a9fb5;
     }
 
-    /* Progress section above Activity Log */
+    /* Progress section above Activity Log - always visible, matches console-container styling */
     .progress-section {
-      height: 50px;
       background: #1a1a1a;
-      border: 1px solid #282828;
       border-radius: 6px;
-      margin-bottom: 12px;
+      border: 1px solid #121212;
+      box-shadow: inset 1px 1px 3px #000000, 0 1px 0 #474747;
       overflow: hidden;
-      display: none; /* Hidden by default, shown when downloads active */
-    }
-
-    .progress-section.active {
-      display: block;
-    }
-
-    /* Horizontal progress bars container */
-    .progress-bars-container {
       display: flex;
       flex-direction: column;
-      gap: 4px;
-      padding: 4px;
+    }
+
+    /* Progress header with label and clear button */
+    .progress-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 4px 8px;
+      border-bottom: 1px solid #0a0a0a;
+      flex-shrink: 0;
+    }
+
+    /* Vertical progress bars container - aligned horizontally */
+    .progress-bars-container {
+      display: flex;
+      flex-direction: row;
+      gap: 6px;
+      padding: 8px;
+      height: 44px; /* 60px total - 16px header = 44px for bars */
+      align-items: flex-end;
+      justify-content: flex-start;
+      flex-shrink: 0;
+    }
+
+    /* Individual vertical progress bar - grows from bottom */
+    .vertical-progress-bar {
+      width: 8px;
       height: 100%;
-      justify-content: center;
-    }
-
-    /* Individual horizontal progress bar - ultra minimalistic */
-    .horizontal-progress-bar {
-      width: 100%;
-      height: 4px;
-      background: #0a0a0a;
       position: relative;
-      animation: slideInDown 0.2s ease;
+      border-radius: 2px;
+      animation: slideInUp 0.3s ease;
       transition: opacity 0.3s ease;
+      cursor: pointer;
     }
 
-    @keyframes slideInDown {
+    @keyframes slideInUp {
       from {
         opacity: 0;
-        transform: translateY(-10px);
+        transform: translateY(10px);
       }
       to {
         opacity: 1;
@@ -554,14 +576,43 @@
       }
     }
 
-    /* Fill for horizontal bar - grows from left */
-    .progress-bar-fill-horizontal {
+    /* Fill for vertical bar - grows from bottom to top */
+    .progress-bar-fill-vertical {
       position: absolute;
       left: 0;
-      top: 0;
-      height: 100%;
+      bottom: 0;
+      width: 100%;
       background: #B9FF37;
-      transition: width 0.3s ease;
+      border-radius: 2px;
+      transition: height 0.3s ease, box-shadow 0.3s ease;
+      min-height: 5%; /* Minimal height when starting (5% of container) */
+    }
+
+    /* Hover effect to show filename tooltip */
+    .vertical-progress-bar:hover {
+    
+    }
+
+    .vertical-progress-bar:hover .progress-bar-fill-vertical {
+      box-shadow: 0 0 8px rgba(185, 255, 55, 0.6);
+    }
+
+    /* Completion state - pulse glow effect */
+    .vertical-progress-bar.completed .progress-bar-fill-vertical {
+      animation: completePulse 1.5s ease-in-out;
+      box-shadow: 0 0 8px rgba(185, 255, 55, 0.8);
+    }
+
+    @keyframes completePulse {
+      0% {
+        box-shadow: 0 0 0 rgba(185, 255, 55, 0);
+      }
+      50% {
+        box-shadow: 0 0 12px rgba(185, 255, 55, 1);
+      }
+      100% {
+        box-shadow: 0 0 8px rgba(185, 255, 55, 0.8);
+      }
     }
 
   </style>
@@ -602,27 +653,27 @@ $$$$$$$ ` $$$$$$ ;$$$$;  $$$$l$$$$;  $$$$;   $$$$     $$$$;   $$$$$$~  :$$$$$$$$
     </button>
   </div>
 
+  <!-- Progress Bars Section (separate from console) -->
+  <div id="progressSection" class="progress-section" style="margin-top: 16px;">
+    <div class="progress-header">
+      <span style="font-size: 10px; color: #6a6a6a; font-weight: 500;">DOWNLOADS</span>
+      <button id="clearProgressBtn" class="clear-progress-btn" style="font-size: 9px; padding: 2px 6px; background: #2a2a2a; border: 1px solid #1a1a1a; border-radius: 3px; color: #888; cursor: pointer;">Clear All</button>
+    </div>
+    <div id="progressBarsContainer" class="progress-bars-container">
+      <!-- Vertical progress bars will be inserted here -->
+    </div>
+  </div>
+
   <!-- Console Section -->
-  <div id="consoleSection" style="margin-top: 16px;">
-    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
-      <div class="setting-label" style="margin: 0;">Activity Log</div>
+  <div id="consoleSection" class="console-container" style="margin-top: 12px;">
+    <div style="display: flex; justify-content: space-between; align-items: center; padding: 4px 8px; border-bottom: 1px solid #0a0a0a;">
+      <span style="font-size: 10px; color: #6a6a6a; font-weight: 500;">ACTIVITY LOG</span>
       <div style="display: flex; gap: 6px;">
-        <button id="clearConsoleBtn" class="reset-connection-btn" style="padding: 3px 10px; font-size: 9px;">
-          Clear
-        </button>
-        <button id="toggleConsoleBtn" class="reset-connection-btn" style="padding: 3px 10px; font-size: 9px;">
-          Hide
-        </button>
+        <button id="clearConsoleBtn" class="clear-progress-btn" style="font-size: 9px; padding: 2px 6px; background: #2a2a2a; border: 1px solid #1a1a1a; border-radius: 3px; color: #888; cursor: pointer;">Clear All</button>
+        <button id="toggleConsoleBtn" class="clear-progress-btn" style="font-size: 9px; padding: 2px 6px; background: #2a2a2a; border: 1px solid #1a1a1a; border-radius: 3px; color: #888; cursor: pointer;">Hide</button>
       </div>
     </div>
-    <div id="consoleContainer" class="console-container">
-      <!-- Progress Bars Section -->
-      <div id="progressSection" class="progress-section">
-        <div id="progressBarsContainer" class="progress-bars-container">
-          <!-- Horizontal progress bars will be inserted here -->
-        </div>
-      </div>
-
+    <div id="consoleContainerInner" class="console-container-inner">
       <!-- Activity Log Section -->
       <div id="consoleContent" class="console-content">
         <div class="console-entry console-info">
@@ -634,9 +685,17 @@ $$$$$$$ ` $$$$$$ ;$$$$;  $$$$l$$$$;  $$$$;   $$$$     $$$$;   $$$$$$~  :$$$$$$$$
   </div>
 
   <!-- Download & Metadata Settings -->
-  <div id="downloadMetadataSettings">
-    <!-- Auto-Download Setting -->
-    <div class="setting">
+  <div id="downloadMetadataSection" style="margin-top: 16px;">
+    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
+      <div class="setting-label" style="margin: 0;">Preferences</div>
+      <button id="toggleDownloadMetadataBtn" class="reset-connection-btn" style="padding: 3px 10px; font-size: 9px;">
+        Hide
+      </button>
+    </div>
+
+    <div id="downloadMetadataSettings" class="collapsible-container" style="padding: 16px; background: #1a1a1a; border-radius: 8px; border: 1px solid #121212; box-shadow: inset 1px 1px 3px #000000, 0 1px 0 #474747;">
+      <!-- Auto-Download Setting -->
+      <div class="setting">
       <div>
         <div class="setting-label">Auto-Download</div>
       </div>
@@ -769,6 +828,7 @@ $$$$$$$ ` $$$$$$ ;$$$$;  $$$$l$$$$;  $$$$;   $$$$     $$$$;   $$$$$$~  :$$$$$$$$
         </div>
       </div>
     </div>
+  </div>
   </div>
 
   <script src="popup.js"></script>
