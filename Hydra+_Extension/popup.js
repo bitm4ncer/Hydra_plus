@@ -264,6 +264,9 @@ function loadActiveDownloads() {
   });
 }
 
+// Track completion times for auto-removal after 1 minute
+const completionTimes = new Map(); // trackId -> timestamp
+
 // Update vertical progress bars in the right container
 function updateProgressBars(activeDownloads) {
   // Clear existing progress bars
@@ -276,8 +279,25 @@ function updateProgressBars(activeDownloads) {
   for (const [trackId, progressData] of Object.entries(activeDownloads)) {
     const { filename, progress, bytesDownloaded, totalBytes, lastUpdate } = progressData;
 
-    // Skip if progress data is older than 30 seconds (stale)
-    if (lastUpdate && (now - lastUpdate) > 30000) {
+    // Check if download is complete
+    const isComplete = progress >= 100;
+
+    // Track completion time
+    if (isComplete && !completionTimes.has(trackId)) {
+      completionTimes.set(trackId, now);
+    }
+
+    // Remove completed downloads after 1 minute (60000ms)
+    if (isComplete && completionTimes.has(trackId)) {
+      const completionTime = completionTimes.get(trackId);
+      if (now - completionTime > 60000) {
+        completionTimes.delete(trackId);
+        continue; // Skip rendering this bar
+      }
+    }
+
+    // Skip if progress data is stale (no updates in 30 seconds and not complete)
+    if (!isComplete && lastUpdate && (now - lastUpdate) > 30000) {
       continue;
     }
 
@@ -286,22 +306,18 @@ function updateProgressBars(activeDownloads) {
     // Get track color
     const trackColor = getTrackColor(trackId);
 
-    // Create vertical progress bar
+    // Create minimalistic vertical progress bar
     const barContainer = document.createElement('div');
     barContainer.className = 'vertical-progress-bar';
+    if (isComplete) {
+      barContainer.classList.add('completed');
+    }
     barContainer.setAttribute('data-track-id', trackId);
-    barContainer.title = filename; // Tooltip shows full filename
+    barContainer.title = filename; // Tooltip shows filename on hover
 
-    // Shorten filename for vertical display (first 10 chars)
-    const shortFilename = filename.length > 10 ? filename.substring(0, 10) + '...' : filename;
-
+    // Ultra-minimalistic: just the bar and fill, no text
     barContainer.innerHTML = `
-      <div class="progress-track-dot" style="background-color: ${trackColor || '#B9FF37'};"></div>
-      <div class="progress-bar-vertical">
-        <div class="progress-bar-fill-vertical" style="height: ${progress}%; background-color: ${trackColor || '#B9FF37'};"></div>
-      </div>
-      <div class="progress-percentage">${Math.round(progress)}%</div>
-      <div class="progress-filename-vertical">${shortFilename}</div>
+      <div class="progress-bar-fill-vertical" style="height: ${progress}%; background-color: ${trackColor || '#B9FF37'};"></div>
     `;
 
     progressBarsContainer.appendChild(barContainer);
@@ -319,6 +335,7 @@ function updateProgressBars(activeDownloads) {
 function clearProgressBars() {
   progressBarsContainer.innerHTML = '';
   progressBarsContainer.style.display = 'none';
+  completionTimes.clear();
 }
 
 // Load active downloads on popup open
