@@ -5,10 +5,10 @@ Multi-headed Spotify → Soulseek bridge with intelligent auto-download.
 Connects to the bridge server to receive track searches from the browser
 extension and automatically triggers searches in Nicotine+.
 
-Version: 0.1.5
+Version: 0.1.6
 """
 
-__version__ = "0.1.5"
+__version__ = "0.1.6"
 
 from pynicotine.pluginsystem import BasePlugin
 from pynicotine.events import events
@@ -79,7 +79,14 @@ class Plugin(BasePlugin):
         self.waiting_for_connection = False  # Track if we're waiting for connection
         self.server_was_running = False  # Track if server was previously running
         self.last_cleanup_time = time.time()  # Track last cleanup of old data
-        self.metadata_cache = {}  # Cache prefetched metadata {(token, track_index): metadata_dict}
+        # IMPROVED: Metadata cache with TTL and size limits
+        self.metadata_cache = {}  # {(token, track_index): {'data': metadata_dict, 'timestamp': time}}
+        self.metadata_cache_max_age = 10 * 60  # 10 minute TTL
+        self.metadata_cache_max_size = 1000  # Max 1000 entries
+        # IMPROVED: Adaptive polling state
+        self.last_activity_time = time.time()
+        self.current_poll_interval = 2  # Start with normal interval
+        self.poll_mode = 'active'  # 'active', 'idle', or 'sleep'
 
         # Get plugin directory and server path
         self.plugin_dir = os.path.dirname(os.path.abspath(__file__))
@@ -394,20 +401,20 @@ class Plugin(BasePlugin):
             return False
 
     def _cleanup_old_data(self):
-        """Cleanup old processed timestamps and stale searches to prevent memory leaks."""
+        """IMPROVED: Cleanup old data with more frequent runs and metadata cache cleanup."""
         try:
             current_time = time.time()
 
-            # Only cleanup every 5 minutes to reduce overhead
-            if current_time - self.last_cleanup_time < 300:
+            # IMPROVED: Run cleanup every 1 minute instead of 5
+            if current_time - self.last_cleanup_time < 60:
                 return
 
             self.last_cleanup_time = current_time
 
-            # Clean up processed timestamps older than 1 hour
-            one_hour_ago = current_time - 3600
+            # IMPROVED: Clean up processed timestamps older than 15 minutes (not 1 hour)
+            fifteen_min_ago = current_time - 900
             old_timestamps = [ts for ts, processed_at in self.processed_timestamps.items()
-                            if processed_at < one_hour_ago]
+                            if processed_at < fifteen_min_ago]
 
             for ts in old_timestamps:
                 del self.processed_timestamps[ts]
@@ -425,6 +432,28 @@ class Plugin(BasePlugin):
 
             if stale_searches:
                 self.log(f"[Hydra+] Cleaned {len(stale_searches)} stale active searches")
+
+            # IMPROVED: Clean up expired metadata cache entries
+            cache_cutoff = current_time - self.metadata_cache_max_age
+            expired_cache = [key for key, value in self.metadata_cache.items()
+                           if value.get('timestamp', current_time) < cache_cutoff]
+
+            for key in expired_cache:
+                del self.metadata_cache[key]
+
+            if expired_cache:
+                self.log(f"[Hydra+] Cleaned {len(expired_cache)} expired metadata cache entries")
+
+            # IMPROVED: Enforce cache size limit (LRU eviction)
+            if len(self.metadata_cache) > self.metadata_cache_max_size:
+                # Sort by timestamp and keep newest entries
+                sorted_cache = sorted(self.metadata_cache.items(),
+                                    key=lambda x: x[1].get('timestamp', 0),
+                                    reverse=True)
+                # Keep only max_size entries
+                self.metadata_cache = dict(sorted_cache[:self.metadata_cache_max_size])
+                removed = len(sorted_cache) - self.metadata_cache_max_size
+                self.log(f"[Hydra+] Evicted {removed} old metadata cache entries (LRU)")
 
         except Exception as e:
             self.log(f"[Hydra+] Error in cleanup: {e}")
@@ -1515,9 +1544,12 @@ class Plugin(BasePlugin):
                         if image_match:
                             album_metadata['image_url'] = image_match.group(1)
 
-                        # Store in cache with 'album' key so all tracks can share it
+                        # IMPROVED: Store in cache with TTL wrapper
                         cache_key = (token, 'album')
-                        self.metadata_cache[cache_key] = album_metadata
+                        self.metadata_cache[cache_key] = {
+                            'data': album_metadata,
+                            'timestamp': time.time()
+                        }
 
                         self.log(f"[Hydra+: PREFETCH-ALBUM] ✓ Album metadata cached (year={album_metadata.get('year', 'N/A')})")
 
@@ -2037,13 +2069,21 @@ class Plugin(BasePlugin):
                 self.log(f"[Hydra+: ALBUM-META] ✗ Unsupported format (only MP3/FLAC), skipping: {file_path}")
                 return (False, file_path)
 
-            # Check if we have prefetched ALBUM metadata in cache (shared across all tracks)
+            # IMPROVED: Check if we have prefetched ALBUM metadata in cache (with TTL check)
             album_metadata = None
             if token is not None:
                 cache_key = (token, 'album')
-                album_metadata = self.metadata_cache.get(cache_key)
-                if album_metadata:
-                    self.log(f"[Hydra+: ALBUM-META]   Using cached album metadata (year={album_metadata.get('year', 'N/A')})")
+                cached_entry = self.metadata_cache.get(cache_key)
+                if cached_entry:
+                    # Check if cache entry is still valid
+                    age = time.time() - cached_entry.get('timestamp', 0)
+                    if age < self.metadata_cache_max_age:
+                        album_metadata = cached_entry.get('data')
+                        self.log(f"[Hydra+: ALBUM-META]   Using cached album metadata (year={album_metadata.get('year', 'N/A')})")
+                    else:
+                        # Expired, remove it
+                        del self.metadata_cache[cache_key]
+                        self.log(f"[Hydra+: ALBUM-META]   Cached metadata expired (age={int(age)}s)")
 
             # Prepare request data with track number and prefetched album metadata
             payload = {
@@ -2796,6 +2836,10 @@ class Plugin(BasePlugin):
                 # Fetch pending searches from server
                 searches = self._get_pending_searches()
 
+                # IMPROVED: Update activity tracking if we have searches
+                if searches:
+                    self.last_activity_time = time.time()
+
                 # Process each search
                 for search in searches:
                     timestamp = search.get('timestamp')
@@ -2840,6 +2884,9 @@ class Plugin(BasePlugin):
                         # Track locally to prevent duplicates (with cleanup timestamp)
                         self.processed_timestamps[timestamp] = time.time()
 
+                        # IMPROVED: Update activity time on successful search
+                        self.last_activity_time = time.time()
+
                         # Add a small delay between searches
                         time.sleep(0.5)
 
@@ -2849,14 +2896,41 @@ class Plugin(BasePlugin):
             # Check for auto-download opportunities (event-driven now, just check timeouts)
             try:
                 self._check_and_download_ready_searches()
+                # IMPROVED: Update activity if we have active searches
+                if self.active_searches:
+                    self.last_activity_time = time.time()
             except Exception as e:
                 self.log(f"[Hydra+] Error in auto-download check: {e}")
 
             # Monitor active downloads for failures/timeouts
             try:
                 self._monitor_downloads()
+                # IMPROVED: Update activity if we have active downloads
+                if self.active_downloads:
+                    self.last_activity_time = time.time()
             except Exception as e:
                 self.log(f"[Hydra+] Error in download monitoring: {e}")
 
+            # IMPROVED: Adaptive polling - adjust interval based on activity
+            time_since_activity = time.time() - self.last_activity_time
+            old_mode = self.poll_mode
+
+            if self.active_searches or self.active_downloads or time_since_activity < 30:
+                # Active mode: activity in last 30 seconds
+                self.poll_mode = 'active'
+                self.current_poll_interval = 2
+            elif time_since_activity < 300:  # 5 minutes
+                # Idle mode: no activity for 30s-5min
+                self.poll_mode = 'idle'
+                self.current_poll_interval = 10
+            else:
+                # Sleep mode: no activity for 5+ minutes
+                self.poll_mode = 'sleep'
+                self.current_poll_interval = 30
+
+            # Log mode changes
+            if old_mode != self.poll_mode:
+                self.log(f"[Hydra+] Poll mode: {old_mode} → {self.poll_mode} (interval: {self.current_poll_interval}s)")
+
             # Wait before next poll
-            time.sleep(self.poll_interval)
+            time.sleep(self.current_poll_interval)

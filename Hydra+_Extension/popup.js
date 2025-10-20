@@ -24,6 +24,11 @@ const resetServerBtn = document.getElementById('resetServerBtn');
 const consoleContainer = document.getElementById('consoleContainer');
 const consoleContent = document.getElementById('consoleContent');
 const toggleConsoleBtn = document.getElementById('toggleConsoleBtn');
+const patternPreset = document.getElementById('patternPreset');
+const singleTrackPattern = document.getElementById('singleTrackPattern');
+const albumTrackPattern = document.getElementById('albumTrackPattern');
+const patternPreview = document.getElementById('patternPreview');
+const patternPreviewAlbum = document.getElementById('patternPreviewAlbum');
 
 // Console management
 const MAX_CONSOLE_ENTRIES = 50;
@@ -323,9 +328,10 @@ async function checkServerStatus() {
       isServerOnline = true;
       updateSaveButtonState();
 
-      // IMPROVED: Send credentials only once when server comes online (not on every check)
+      // IMPROVED: Send credentials and patterns only once when server comes online (not on every check)
       if (wasOffline) {
         sendCredentialsToServer();
+        sendPatternsToServer();
         addConsoleEvent('success', 'Bridge server connected');
       }
 
@@ -506,6 +512,29 @@ function sendCredentialsToServer() {
   });
 }
 
+// Send rename patterns to server when it comes online
+function sendPatternsToServer() {
+  chrome.storage.sync.get(['singleTrackPattern', 'albumTrackPattern'], (data) => {
+    const singlePattern = data.singleTrackPattern || '{artist} - {track}';
+    const albumPattern = data.albumTrackPattern || '{trackNum} {artist} - {track}';
+
+    if (isServerOnline) {
+      fetch(`${BRIDGE_URL}/set-rename-pattern`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          singleTrack: singlePattern,
+          albumTrack: albumPattern
+        })
+      }).catch(err => {
+        if (isServerOnline) {
+          console.error('Failed to send patterns to server:', err);
+        }
+      });
+    }
+  });
+}
+
 // Check server status on popup open
 checkServerStatus();
 
@@ -569,8 +598,9 @@ resetServerBtn.addEventListener('click', async () => {
             resetServerBtn.disabled = false;
             resetServerBtn.textContent = originalText;
 
-            // Send credentials to server after restart
+            // Send credentials and patterns to server after restart
             sendCredentialsToServer();
+            sendPatternsToServer();
 
             // Log success
             addConsoleEvent('success', 'Bridge server restarted successfully');
@@ -605,3 +635,154 @@ resetServerBtn.addEventListener('click', async () => {
     addConsoleEvent('error', 'Server restart failed');
   }
 });
+
+// ===== FILE NAMING PATTERN MANAGEMENT =====
+
+// Example data for preview
+const previewData = {
+  artist: 'Iron Maiden',
+  track: 'The Trooper',
+  album: 'Piece of Mind',
+  year: '1983',
+  trackNum: '01'
+};
+
+// Generate preview from pattern
+function generatePreview(pattern, includeTrackNum = false) {
+  let preview = pattern;
+
+  // Replace tokens
+  preview = preview.replace(/\{trackNum\}/g, includeTrackNum ? previewData.trackNum : '');
+  preview = preview.replace(/\{artist\}/g, previewData.artist);
+  preview = preview.replace(/\{track\}/g, previewData.track);
+  preview = preview.replace(/\{album\}/g, previewData.album);
+  preview = preview.replace(/\{year\}/g, previewData.year);
+
+  // Clean up extra spaces/separators
+  preview = preview.replace(/\s+/g, ' ').replace(/\s*-\s*-\s*/g, ' - ').trim();
+  preview = preview.replace(/^-\s*/, '').replace(/\s*-$/, '');
+
+  return preview + '.mp3';
+}
+
+// Update preview displays
+function updatePreviews() {
+  const singlePattern = singleTrackPattern.value || '{artist} - {track}';
+  const albumPattern = albumTrackPattern.value || '{trackNum} {artist} - {track}';
+
+  patternPreview.textContent = generatePreview(singlePattern, false);
+  patternPreviewAlbum.textContent = generatePreview(albumPattern, true);
+}
+
+// Send pattern to bridge server
+async function sendPatternToServer(singlePattern, albumPattern) {
+  if (!isServerOnline) {
+    console.log('[Hydra+] Server offline - pattern will be sent when server connects');
+    return;
+  }
+
+  try {
+    const response = await fetch(`${BRIDGE_URL}/set-rename-pattern`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        singleTrack: singlePattern,
+        albumTrack: albumPattern
+      })
+    });
+
+    if (response.ok) {
+      console.log('[Hydra+] Rename pattern sent to server');
+      addConsoleEvent('success', 'File naming pattern updated');
+    } else {
+      console.error('[Hydra+] Failed to send pattern to server');
+    }
+  } catch (error) {
+    if (isServerOnline) {
+      console.error('[Hydra+] Error sending pattern to server:', error);
+    }
+  }
+}
+
+// Load saved patterns
+function loadPatterns() {
+  chrome.storage.sync.get(['singleTrackPattern', 'albumTrackPattern'], (data) => {
+    const singlePattern = data.singleTrackPattern || '{artist} - {track}';
+    const albumPattern = data.albumTrackPattern || '{trackNum} {artist} - {track}';
+
+    singleTrackPattern.value = singlePattern;
+    albumTrackPattern.value = albumPattern;
+
+    // Check if current pattern matches a preset
+    updatePresetSelection(singlePattern);
+
+    updatePreviews();
+
+    // Send to server when loaded
+    sendPatternToServer(singlePattern, albumPattern);
+  });
+}
+
+// Update preset dropdown based on current single track pattern
+function updatePresetSelection(pattern) {
+  const presetOptions = Array.from(patternPreset.options);
+  const matchingOption = presetOptions.find(opt => opt.value === pattern);
+
+  if (matchingOption) {
+    patternPreset.value = pattern;
+  } else {
+    patternPreset.value = 'custom';
+  }
+}
+
+// Preset dropdown change handler
+patternPreset.addEventListener('change', () => {
+  const selectedValue = patternPreset.value;
+
+  if (selectedValue !== 'custom') {
+    singleTrackPattern.value = selectedValue;
+
+    // Set default album pattern based on preset
+    if (selectedValue.includes('{trackNum}')) {
+      albumTrackPattern.value = selectedValue;
+    } else {
+      albumTrackPattern.value = '{trackNum} ' + selectedValue;
+    }
+
+    // Save and update
+    savePatterns();
+  }
+});
+
+// Input change handlers with debouncing
+let patternSaveTimeout;
+function savePatterns() {
+  clearTimeout(patternSaveTimeout);
+  patternSaveTimeout = setTimeout(() => {
+    const singlePattern = singleTrackPattern.value.trim() || '{artist} - {track}';
+    const albumPattern = albumTrackPattern.value.trim() || '{trackNum} {artist} - {track}';
+
+    chrome.storage.sync.set({
+      singleTrackPattern: singlePattern,
+      albumTrackPattern: albumPattern
+    }, () => {
+      console.log('[Hydra+] Patterns saved:', { singlePattern, albumPattern });
+      updatePreviews();
+      updatePresetSelection(singlePattern);
+      sendPatternToServer(singlePattern, albumPattern);
+    });
+  }, 500);
+}
+
+singleTrackPattern.addEventListener('input', () => {
+  updatePreviews();
+  savePatterns();
+});
+
+albumTrackPattern.addEventListener('input', () => {
+  updatePreviews();
+  savePatterns();
+});
+
+// Load patterns on startup
+loadPatterns();

@@ -58,17 +58,11 @@ function stripVersionSuffixes(text) {
   if (!text) return text;
 
   // Pattern matches common suffixes:
-  // - Remaster/Remastered with optional year
+  // - Remaster/Remastered with optional year (e.g., "2015 Remaster", "Remastered 2015")
   // - Deluxe/Special/Limited Edition variants
   // - Live/Acoustic/Radio Edit versions
   // Handles both " - " and " (" separators
-  const pattern = /\s*[-(\[]\s*(
-    \d{4}\s+(Remaster(ed)?|Edition)|  # 2015 Remaster, 2015 Edition
-    Remaster(ed)?(\s+\d{4})?|          # Remastered, Remaster 2015
-    (Deluxe|Special|Limited|Expanded|Collector'?s)\s+(Edition|Version)|
-    (Live|Acoustic|Radio|Single|Album)\s+(Version|Edit|Mix)|
-    Bonus\s+Track\s+Version
-  ).*$/ix;
+  const pattern = /\s*[-(\[]\s*(\d{4}\s+(Remaster(ed)?|Edition)|Remaster(ed)?(\s+\d{4})?|(Deluxe|Special|Limited|Expanded|Collector'?s)\s+(Edition|Version)|(Live|Acoustic|Radio|Single|Album)\s+(Version|Edit|Mix)|Bonus\s+Track\s+Version).*$/i;
 
   return text.replace(pattern, '').trim();
 }
@@ -224,10 +218,8 @@ async function sendToNicotine(trackInfo) {
         formatPreference,
         rawFormatPref: result.formatPreference
       });
-    } else {
-      // Chrome API not available, use defaults
-      console.warn('[Hydra+] Chrome storage API not available - using default settings');
     }
+    // If storage not available, silently use defaults (no warning needed)
   } catch (error) {
     // Any error accessing storage - use defaults and continue
     console.warn('[Hydra+] Could not access storage - using default settings:', error.message || error);
@@ -746,8 +738,46 @@ function processAllTrackRows() {
 }
 
 /**
- * Initialize the extension
+ * IMPROVED: Throttled processing to prevent excessive calls
  */
+let processingScheduled = false;
+let lastProcessTime = 0;
+const PROCESS_THROTTLE_MS = 100; // Max once per 100ms
+
+function scheduleProcessing() {
+  if (processingScheduled) return;
+
+  const now = Date.now();
+  const timeSinceLastProcess = now - lastProcessTime;
+
+  if (timeSinceLastProcess < PROCESS_THROTTLE_MS) {
+    // Too soon, schedule for later
+    processingScheduled = true;
+    setTimeout(() => {
+      processingScheduled = false;
+      lastProcessTime = Date.now();
+      processAllTrackRows();
+
+      if (isAlbumPage() && !albumProcessed) {
+        processAlbumPage();
+      }
+    }, PROCESS_THROTTLE_MS - timeSinceLastProcess);
+  } else {
+    // Process immediately
+    lastProcessTime = now;
+    processAllTrackRows();
+
+    if (isAlbumPage() && !albumProcessed) {
+      processAlbumPage();
+    }
+  }
+}
+
+/**
+ * IMPROVED: Initialize with optimized observer
+ */
+let mainObserver = null;
+
 function init() {
   // Process initial tracks
   processAllTrackRows();
@@ -757,42 +787,55 @@ function init() {
     processAlbumPage();
   }
 
-  // Set up MutationObserver to handle dynamically loaded content
-  const observer = new MutationObserver((mutations) => {
+  // IMPROVED: Set up throttled MutationObserver
+  mainObserver = new MutationObserver((mutations) => {
     let shouldProcess = false;
 
     for (const mutation of mutations) {
       // Check if new nodes were added
       if (mutation.addedNodes.length > 0) {
-        shouldProcess = true;
-        break;
+        // Only process if nodes contain actual track rows or album elements
+        for (const node of mutation.addedNodes) {
+          if (node.nodeType === Node.ELEMENT_NODE) {
+            // Check if this is a track row or contains track rows
+            if (node.matches && (
+              node.matches('[data-testid="tracklist-row"]') ||
+              node.matches('[data-testid="top-tracks-entity-row"]') ||
+              node.matches('[data-testid="action-bar-row"]') ||
+              node.querySelector('[data-testid="tracklist-row"]') ||
+              node.querySelector('[data-testid="top-tracks-entity-row"]') ||
+              node.querySelector('[data-testid="action-bar-row"]')
+            )) {
+              shouldProcess = true;
+              break;
+            }
+          }
+        }
+        if (shouldProcess) break;
       }
     }
 
     if (shouldProcess) {
-      processAllTrackRows();
-
-      // Try to add album button if on album page and not yet added
-      if (isAlbumPage() && !albumProcessed) {
-        processAlbumPage();
-      }
+      scheduleProcessing();
     }
   });
 
   // Observe the entire document for changes
-  observer.observe(document.body, {
+  mainObserver.observe(document.body, {
     childList: true,
     subtree: true
   });
 
-  console.log('Nicotine+ Browser Link extension initialized');
+  console.log('Nicotine+ Browser Link extension initialized (optimized mode)');
 }
 
-// Reset album processed flag when navigating (Spotify is a SPA)
-// IMPROVED: Cleanup observer and optimize navigation detection
+// IMPROVED: Navigation detection with cleanup
 let lastUrl = location.href;
 let lastAlbumId = null;
-const navigationObserver = new MutationObserver(() => {
+let navigationCheckInterval = null;
+
+// Use polling instead of MutationObserver for URL changes (more efficient)
+function checkNavigation() {
   const url = location.href;
   const currentAlbumId = getAlbumId();
 
@@ -802,20 +845,39 @@ const navigationObserver = new MutationObserver(() => {
     lastAlbumId = currentAlbumId;
     albumProcessed = false; // Reset flag when URL changes
 
+    // Clear processed rows WeakSet on navigation (helps with garbage collection)
+    // Note: WeakSet can't be cleared, but we can stop adding to the old one
+    // by creating references to new elements only
+    console.log('[Cleanup] Navigation - old processed rows will be GC\'d');
+
     // Re-process if we navigated to an album page
     if (isAlbumPage()) {
       setTimeout(() => processAlbumPage(), 500); // Small delay for content to load
     }
   }
-});
+}
 
-navigationObserver.observe(document, { subtree: true, childList: true });
+// Check for navigation every 500ms (less intensive than MutationObserver)
+navigationCheckInterval = setInterval(checkNavigation, 500);
 
-// Cleanup on page unload to prevent memory leaks
+// IMPROVED: Comprehensive cleanup on page unload
 window.addEventListener('beforeunload', () => {
-  if (navigationObserver) {
-    navigationObserver.disconnect();
+  console.log('[Cleanup] Page unload - cleaning up observers and intervals');
+
+  // Clear navigation interval
+  if (navigationCheckInterval) {
+    clearInterval(navigationCheckInterval);
+    navigationCheckInterval = null;
   }
+
+  // Disconnect main observer
+  if (mainObserver) {
+    mainObserver.disconnect();
+    mainObserver = null;
+  }
+
+  // Clear any scheduled processing
+  processingScheduled = false;
 });
 
 // Wait for the page to be ready

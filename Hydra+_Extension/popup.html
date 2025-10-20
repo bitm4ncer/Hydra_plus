@@ -152,7 +152,8 @@
     }
 
     input[type="text"],
-    input[type="password"] {
+    input[type="password"],
+    select {
       width: 100%;
       padding: 8px 10px;
       background: #282828;
@@ -166,7 +167,8 @@
     }
 
     input[type="text"]:focus,
-    input[type="password"]:focus {
+    input[type="password"]:focus,
+    select:focus {
       outline: none;
       border-color: #B9FF37;
     }
@@ -174,6 +176,11 @@
     input[type="text"]::placeholder,
     input[type="password"]::placeholder {
       color: #6a6a6a;
+    }
+
+    select option {
+      background: #282828;
+      color: #ffffff;
     }
 
     .api-hint {
@@ -340,8 +347,7 @@
     }
 
     .console-content {
-      max-height: 180px;
-      overflow-y: auto;
+      max-height: 100px;
       padding: 8px 10px;
       font-family: 'Courier New', monospace;
       font-size: 10px;
@@ -541,6 +547,58 @@ $$$$$$$ ` $$$$$$ ;$$$$;  $$$$l$$$$;  $$$$;   $$$$     $$$$;   $$$$$$~  :$$$$$$$$
       <div class="saved-indicator" id="apiErrorIndicator" style="color: #e22134;">✗ Connection failed</div>
     </div>
   </div>
+
+    <!-- File Naming Pattern Setting -->
+    <div class="setting" id="fileNamingSection" style="border-top: 1px solid #282828; padding-top: 16px; margin-top: 16px;">
+      <div style="width: 100%;">
+        <div class="setting-label" style="margin-bottom: 12px;">File Naming Pattern</div>
+
+        <!-- Preset Patterns Dropdown -->
+        <div style="margin-bottom: 12px;">
+          <label class="input-label">Quick Presets</label>
+          <select id="patternPreset" style="width: 100%; padding: 8px 10px; background: #282828; border: 1px solid #404040; border-radius: 4px; color: #ffffff; font-size: 12px; cursor: pointer;">
+            <option value="custom">Custom Pattern</option>
+            <option value="{artist} - {track}">{artist} - {track}</option>
+            <option value="{trackNum} {artist} - {track}">{trackNum} {artist} - {track}</option>
+            <option value="{trackNum} - {track}">{trackNum} - {track}</option>
+            <option value="{track}">{track}</option>
+            <option value="{artist} - {track} ({year})">{artist} - {track} ({year})</option>
+            <option value="{trackNum} - {album} - {track}">{trackNum} - {album} - {track}</option>
+          </select>
+        </div>
+
+        <!-- Custom Pattern Input -->
+        <div style="margin-bottom: 8px;">
+          <label class="input-label">Single Track Pattern</label>
+          <input type="text" id="singleTrackPattern" placeholder="{artist} - {track}" style="font-family: monospace; font-size: 11px;">
+        </div>
+
+        <div style="margin-bottom: 12px;">
+          <label class="input-label">Album Track Pattern</label>
+          <input type="text" id="albumTrackPattern" placeholder="{trackNum} {artist} - {track}" style="font-family: monospace; font-size: 11px;">
+        </div>
+
+        <!-- Available Tokens Reference -->
+        <div class="description" style="margin-bottom: 8px;">
+          Available tokens: <br><span style="color: #B9FF37; font-family: monospace; font-size: 11px;">{artist}</span>,
+          <span style="color: #B9FF37; font-family: monospace; font-size: 11px;">{track}</span>,
+          <span style="color: #B9FF37; font-family: monospace; font-size: 11px;">{trackNum}</span>,
+          <span style="color: #B9FF37; font-family: monospace; font-size: 11px;">{album}</span>,
+          <span style="color: #B9FF37; font-family: monospace; font-size: 11px;">{year}</span>
+        </div>
+
+        <!-- Live Preview -->
+        <div style="background: #1a1a1a; padding: 10px; border-radius: 4px; border: 1px solid #282828;">
+          <div class="input-label" style="margin-bottom: 6px;">Preview:</div>
+          <div id="patternPreview" style="font-family: monospace; font-size: 11px; color: #B9FF37; word-break: break-all;">
+            Iron Maiden - The Trooper.mp3
+          </div>
+          <div id="patternPreviewAlbum" style="font-family: monospace; font-size: 11px; color: #6a9fb5; word-break: break-all; margin-top: 4px;">
+            01 Iron Maiden - The Trooper.mp3
+          </div>
+        </div>
+      </div>
+    </div>
   </div>
 
   <script src="popup.js"></script>

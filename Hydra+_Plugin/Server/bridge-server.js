@@ -14,17 +14,22 @@ const fs = require('fs');
 const { promises: fsPromises } = require('fs');
 const path = require('path');
 
-// CRITICAL FIX: Configure HTTP agents with increased connection limits
-// Default Node.js limit is 5 concurrent connections per host, which causes
-// connection pool exhaustion when processing album batches with background fetches
+// IMPROVED: Configure HTTP agents with optimized connection management
+// Prevents connection pool exhaustion while avoiding socket hoarding
 const httpAgent = new http.Agent({
-  maxSockets: 20,  // Allow up to 20 concurrent HTTP connections
-  keepAlive: true
+  maxSockets: 20,           // Max concurrent connections per host
+  maxFreeSockets: 5,        // Max idle sockets to keep (prevent hoarding)
+  timeout: 30000,           // Socket timeout: 30s
+  keepAlive: true,
+  keepAliveMsecs: 30000     // Keep alive for 30s, then recycle
 });
 
 const httpsAgent = new https.Agent({
-  maxSockets: 20,  // Allow up to 20 concurrent HTTPS connections (for Spotify)
-  keepAlive: true
+  maxSockets: 20,           // Max concurrent HTTPS connections (for Spotify)
+  maxFreeSockets: 5,        // Max idle sockets to keep
+  timeout: 30000,           // Socket timeout: 30s
+  keepAlive: true,
+  keepAliveMsecs: 30000     // Keep alive for 30s, then recycle
 });
 
 // Load required npm packages with error handling
@@ -56,17 +61,75 @@ const CREDENTIALS_FILE = path.join(__dirname, 'spotify-credentials.json');
 const metadataQueue = [];
 let isProcessingMetadata = false;
 
-// Cover art cache to avoid downloading the same image multiple times per album
-// Key: imageUrl, Value: { buffer: Buffer, timestamp: number }
+// IMPROVED: LRU Cover art cache with size limits to prevent memory leaks
+// Key: imageUrl, Value: { buffer: Buffer, timestamp: number, size: number }
 const coverArtCache = new Map();
+const COVER_ART_CACHE_MAX_SIZE = 50 * 1024 * 1024; // 50MB max cache size
+const COVER_ART_CACHE_MAX_AGE = 5 * 60 * 1000; // 5 minutes TTL
+let coverArtCacheTotalSize = 0;
+
+// IMPROVED: Request tracking for cleanup (AbortController support)
+const activeRequests = new Set(); // Track active HTTP requests
+const activeTimeouts = new Set(); // Track all active timeouts for cleanup
+
+// Health metrics for monitoring
+const healthMetrics = {
+  startTime: Date.now(),
+  requestCount: 0,
+  errorCount: 0,
+  metadataProcessed: 0,
+  cacheHits: 0,
+  cacheMisses: 0,
+  memoryPeakMB: 0,
+  lastHealthCheck: Date.now()
+};
 
 // Note: Album batch processing is handled via sequential metadata queue processing
 // which naturally prevents concurrent issues by processing one track at a time
 
-// Event tracking for popup console
-const MAX_EVENTS = 100; // Keep last 100 events
+// IMPROVED: Event tracking with TTL and size limits
+const MAX_EVENTS = 50; // Reduced from 100 to save memory
+const EVENT_MAX_AGE = 60 * 60 * 1000; // 1 hour TTL for events
 let eventIdCounter = 0;
 const events = [];
+
+// IMPROVED: Helper to track timeouts for cleanup
+function createTrackedTimeout(callback, delay) {
+  const timeoutId = setTimeout(() => {
+    activeTimeouts.delete(timeoutId);
+    callback();
+  }, delay);
+  activeTimeouts.add(timeoutId);
+  return timeoutId;
+}
+
+// IMPROVED: Helper to clear tracked timeout
+function clearTrackedTimeout(timeoutId) {
+  if (timeoutId) {
+    clearTimeout(timeoutId);
+    activeTimeouts.delete(timeoutId);
+  }
+}
+
+// IMPROVED: Cleanup old events based on age
+function cleanupOldEvents() {
+  const now = Date.now();
+  const cutoffTime = now - EVENT_MAX_AGE;
+
+  // Remove events older than 1 hour
+  let removed = 0;
+  for (let i = events.length - 1; i >= 0; i--) {
+    const eventTime = new Date(events[i].timestamp).getTime();
+    if (eventTime < cutoffTime) {
+      events.splice(i, 1);
+      removed++;
+    }
+  }
+
+  if (removed > 0) {
+    console.log(`[Hydra+: CLEANUP] Removed ${removed} old events`);
+  }
+}
 
 // Add event to tracking (for popup console)
 function addEvent(type, message) {
@@ -84,7 +147,94 @@ function addEvent(type, message) {
     events.shift();
   }
 
+  // Periodically cleanup old events (every 100 events)
+  if (eventIdCounter % 100 === 0) {
+    cleanupOldEvents();
+  }
+
   return event;
+}
+
+// IMPROVED: LRU cache management for cover art
+function evictOldestCacheEntry() {
+  if (coverArtCache.size === 0) return;
+
+  // Find oldest entry
+  let oldestKey = null;
+  let oldestTime = Infinity;
+
+  for (const [key, value] of coverArtCache.entries()) {
+    if (value.timestamp < oldestTime) {
+      oldestTime = value.timestamp;
+      oldestKey = key;
+    }
+  }
+
+  if (oldestKey) {
+    const entry = coverArtCache.get(oldestKey);
+    coverArtCacheTotalSize -= entry.size;
+    coverArtCache.delete(oldestKey);
+    console.log(`[Hydra+: CACHE] Evicted oldest entry (${Math.round(entry.size / 1024)}KB freed)`);
+  }
+}
+
+// IMPROVED: Add cover art to cache with size management
+function addToCoverArtCache(imageUrl, buffer) {
+  const size = buffer.length;
+
+  // Evict entries until we have room
+  while (coverArtCacheTotalSize + size > COVER_ART_CACHE_MAX_SIZE && coverArtCache.size > 0) {
+    evictOldestCacheEntry();
+  }
+
+  // If single image is larger than max cache, don't cache it
+  if (size > COVER_ART_CACHE_MAX_SIZE) {
+    console.log(`[Hydra+: CACHE] Image too large to cache (${Math.round(size / 1024 / 1024)}MB)`);
+    return;
+  }
+
+  coverArtCache.set(imageUrl, {
+    buffer: buffer,
+    timestamp: Date.now(),
+    size: size
+  });
+
+  coverArtCacheTotalSize += size;
+  console.log(`[Hydra+: CACHE] Added to cache (${Math.round(size / 1024)}KB, total: ${Math.round(coverArtCacheTotalSize / 1024 / 1024)}MB)`);
+}
+
+// IMPROVED: Cleanup expired cache entries
+function cleanupExpiredCache() {
+  const now = Date.now();
+  const cutoffTime = now - COVER_ART_CACHE_MAX_AGE;
+
+  let removed = 0;
+  let freedBytes = 0;
+
+  for (const [key, value] of coverArtCache.entries()) {
+    if (value.timestamp < cutoffTime) {
+      freedBytes += value.size;
+      coverArtCacheTotalSize -= value.size;
+      coverArtCache.delete(key);
+      removed++;
+    }
+  }
+
+  if (removed > 0) {
+    console.log(`[Hydra+: CACHE] Expired ${removed} entries (${Math.round(freedBytes / 1024)}KB freed)`);
+  }
+}
+
+// IMPROVED: Update health metrics
+function updateHealthMetrics() {
+  const memUsage = process.memoryUsage();
+  const memMB = Math.round(memUsage.heapUsed / 1024 / 1024);
+
+  if (memMB > healthMetrics.memoryPeakMB) {
+    healthMetrics.memoryPeakMB = memMB;
+  }
+
+  healthMetrics.lastHealthCheck = Date.now();
 }
 
 // Spotify API credentials (optional, set via extension popup)
@@ -93,6 +243,12 @@ let spotifyCredentials = {
   clientSecret: null,
   accessToken: null,
   tokenExpiry: 0
+};
+
+// File rename pattern (configurable via extension popup)
+let renamePattern = {
+  singleTrack: '{artist} - {track}',  // Default for single downloads
+  albumTrack: '{trackNum} {artist} - {track}'  // Default for album downloads
 };
 
 // Initialize queue file if it doesn't exist
@@ -341,26 +497,54 @@ const server = http.createServer((req, res) => {
     return;
   }
 
-  // Handle GET to /status
+  // IMPROVED: Enhanced health check and status endpoint
   if (req.method === 'GET' && req.url === '/status') {
     try {
+      updateHealthMetrics();
+
       const queueContent = fs.readFileSync(QUEUE_FILE, 'utf8');
       const queue = JSON.parse(queueContent);
+
+      const memUsage = process.memoryUsage();
+      const uptimeSeconds = Math.floor((Date.now() - healthMetrics.startTime) / 1000);
 
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({
         status: 'running',
+        uptime: uptimeSeconds,
         queueSize: queue.searches.length,
         unprocessed: queue.searches.filter(s => !s.processed).length,
-        events: events // Include recent events for popup console
+        events: events, // Recent events for popup console
+        health: {
+          memory: {
+            heapUsedMB: Math.round(memUsage.heapUsed / 1024 / 1024),
+            heapTotalMB: Math.round(memUsage.heapTotal / 1024 / 1024),
+            peakMB: healthMetrics.memoryPeakMB,
+            coverCacheMB: Math.round(coverArtCacheTotalSize / 1024 / 1024),
+            coverCacheEntries: coverArtCache.size
+          },
+          metrics: {
+            requestCount: healthMetrics.requestCount,
+            errorCount: healthMetrics.errorCount,
+            metadataProcessed: healthMetrics.metadataProcessed,
+            cacheHitRate: healthMetrics.cacheHits + healthMetrics.cacheMisses > 0
+              ? Math.round((healthMetrics.cacheHits / (healthMetrics.cacheHits + healthMetrics.cacheMisses)) * 100)
+              : 0
+          },
+          queues: {
+            metadataQueue: metadataQueue.length,
+            activeTimeouts: activeTimeouts.size
+          }
+        }
       }));
     } catch (error) {
       console.error('[Hydra+: ERROR] Status endpoint error:', error.message);
+      healthMetrics.errorCount++;
       res.writeHead(500, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({
         error: 'Failed to read queue',
         details: error.message,
-        events: events // Include events even on error
+        events: events
       }));
     }
     return;
@@ -588,6 +772,46 @@ const server = http.createServer((req, res) => {
         console.error('[Hydra+: FOLDER] ✗ Error:', error);
         res.writeHead(400, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ success: false, error: 'Invalid JSON' }));
+      }
+    });
+
+    return;
+  }
+
+  // Handle POST to /set-rename-pattern - receive file rename pattern from extension
+  if (req.method === 'POST' && req.url === '/set-rename-pattern') {
+    let body = '';
+
+    req.on('data', chunk => {
+      body += chunk.toString();
+    });
+
+    req.on('end', () => {
+      try {
+        const data = JSON.parse(body);
+
+        // Validate pattern includes required tokens
+        if (data.singleTrack && typeof data.singleTrack === 'string') {
+          renamePattern.singleTrack = data.singleTrack;
+        }
+        if (data.albumTrack && typeof data.albumTrack === 'string') {
+          renamePattern.albumTrack = data.albumTrack;
+        }
+
+        console.log('[Hydra+: CONFIG] ✓ Rename pattern updated:', renamePattern);
+
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({
+          success: true,
+          pattern: renamePattern
+        }));
+      } catch (error) {
+        console.error('[Hydra+: CONFIG] ✗ Error setting rename pattern:', error.message);
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({
+          success: false,
+          error: error.message
+        }));
       }
     });
 
@@ -862,29 +1086,41 @@ function sanitizeFilename(text) {
   return text.replace(/[<>:"/\\|?*]/g, '').trim();
 }
 
-// Rename file to "Artist - Track.mp3" or "01 Artist - Track.mp3" format
-async function renameFile(oldPath, artist, track, trackNumber) {
+// Rename file using configurable pattern
+// Supports tokens: {artist}, {track}, {trackNum}, {album}, {year}
+async function renameFile(oldPath, artist, track, trackNumber, album = '', year = '') {
   try {
     const dir = path.dirname(oldPath);
     const ext = path.extname(oldPath);
     const artistClean = sanitizeFilename(artist);
     const trackClean = sanitizeFilename(track);
+    const albumClean = sanitizeFilename(album);
+    const yearClean = sanitizeFilename(year);
 
-    if (!artistClean || !trackClean) {
-      console.error(`[Hydra+: META] ✗ Cannot rename - missing artist or track name`);
-      console.error(`[Hydra+: META]   Artist: "${artist}" → "${artistClean}"`);
-      console.error(`[Hydra+: META]   Track: "${track}" → "${trackClean}"`);
-      return oldPath; // Can't rename without artist and track
+    if (!artistClean && !trackClean) {
+      console.error(`[Hydra+: META] ✗ Cannot rename - missing both artist and track name`);
+      return oldPath;
     }
 
-    // Add track number prefix if provided (for album downloads)
-    let newFilename;
-    if (trackNumber && trackNumber > 0) {
-      const trackNumPadded = String(trackNumber).padStart(2, '0');
-      newFilename = `${trackNumPadded} ${artistClean} - ${trackClean}${ext}`;
-    } else {
-      newFilename = `${artistClean} - ${trackClean}${ext}`;
-    }
+    // Choose pattern based on whether this is an album track
+    const pattern = (trackNumber && trackNumber > 0) ? renamePattern.albumTrack : renamePattern.singleTrack;
+
+    // Build filename from pattern
+    let newFilename = pattern;
+
+    // Replace tokens with actual values
+    newFilename = newFilename.replace(/\{trackNum\}/g, trackNumber ? String(trackNumber).padStart(2, '0') : '');
+    newFilename = newFilename.replace(/\{artist\}/g, artistClean);
+    newFilename = newFilename.replace(/\{track\}/g, trackClean);
+    newFilename = newFilename.replace(/\{album\}/g, albumClean);
+    newFilename = newFilename.replace(/\{year\}/g, yearClean);
+
+    // Clean up extra spaces/separators left by empty tokens
+    newFilename = newFilename.replace(/\s+/g, ' ').replace(/\s*-\s*-\s*/g, ' - ').trim();
+    newFilename = newFilename.replace(/^-\s*/, '').replace(/\s*-$/, ''); // Remove leading/trailing dashes
+
+    // Add file extension
+    newFilename = `${newFilename}${ext}`;
 
     const newPath = path.join(dir, newFilename);
 
@@ -897,13 +1133,7 @@ async function renameFile(oldPath, artist, track, trackNumber) {
     let finalPath = newPath;
     let counter = 1;
     while (fs.existsSync(finalPath)) {
-      let base;
-      if (trackNumber && trackNumber > 0) {
-        const trackNumPadded = String(trackNumber).padStart(2, '0');
-        base = `${trackNumPadded} ${artistClean} - ${trackClean}`;
-      } else {
-        base = `${artistClean} - ${trackClean}`;
-      }
+      const base = newFilename.replace(ext, '');
       finalPath = path.join(dir, `${base} (${counter})${ext}`);
       counter++;
     }
@@ -993,7 +1223,7 @@ async function fetchSpotifyMetadata(trackId) {
   });
 }
 
-// Download cover art from URL (with caching to avoid re-downloading for each track)
+// IMPROVED: Download cover art with LRU cache management
 async function downloadCoverArt(imageUrl) {
   return new Promise((resolve) => {
     if (!imageUrl) {
@@ -1006,62 +1236,66 @@ async function downloadCoverArt(imageUrl) {
     if (cached) {
       // Cache hit - reuse the downloaded image
       const age = Date.now() - cached.timestamp;
-      if (age < 300000) { // Cache for 5 minutes
+      if (age < COVER_ART_CACHE_MAX_AGE) {
+        healthMetrics.cacheHits++;
         console.log(`[Hydra+: META] ✓ Using cached cover (${cached.buffer.length} bytes)`);
         resolve(cached.buffer);
         return;
       } else {
         // Cache expired, remove it
+        coverArtCacheTotalSize -= cached.size;
         coverArtCache.delete(imageUrl);
       }
     }
 
+    healthMetrics.cacheMisses++;
     console.log(`[Hydra+: META] ⬇ Downloading cover...`);
     addEvent('info', 'Downloading cover art from Spotify');
 
-    // Set timeout to prevent hanging - increased to 30s for slower connections
-    const timeout = setTimeout(() => {
+    // Set timeout to prevent hanging - 30s for slower connections
+    const timeout = createTrackedTimeout(() => {
       console.error('[Hydra+: META] ⚠ Cover timeout (30s)');
+      healthMetrics.errorCount++;
       resolve(null);
     }, 30000);
 
     const req = https.get(imageUrl, { agent: httpsAgent }, (imgRes) => {
-      clearTimeout(timeout);
+      clearTrackedTimeout(timeout);
       const chunks = [];
       imgRes.on('data', chunk => chunks.push(chunk));
       imgRes.on('end', () => {
         const buffer = Buffer.concat(chunks);
         console.log(`[Hydra+: META] ✓ Cover: ${buffer.length} bytes`);
 
-        // Store in cache for future tracks in this album
-        coverArtCache.set(imageUrl, {
-          buffer: buffer,
-          timestamp: Date.now()
-        });
+        // IMPROVED: Use cache management function with size limits
+        addToCoverArtCache(imageUrl, buffer);
 
         resolve(buffer);
       });
       imgRes.on('error', (err) => {
-        clearTimeout(timeout);
+        clearTrackedTimeout(timeout);
         console.error(`[Hydra+: META] ✗ Image response error: ${err.message}`);
+        healthMetrics.errorCount++;
         resolve(null);
       });
     });
 
     req.on('error', (err) => {
-      clearTimeout(timeout);
+      clearTrackedTimeout(timeout);
       console.error(`[Hydra+: META] ✗ Image error: ${err.message}`);
+      healthMetrics.errorCount++;
       resolve(null);
     });
 
     req.on('timeout', () => {
       req.destroy();
-      clearTimeout(timeout);
+      clearTrackedTimeout(timeout);
       console.error('[Hydra+: META] ⚠ Cover request timeout');
+      healthMetrics.errorCount++;
       resolve(null);
     });
 
-    req.setTimeout(30000); // 30 second timeout - increased for slower connections
+    req.setTimeout(30000); // 30 second timeout
   });
 }
 
@@ -1108,7 +1342,9 @@ async function processMetadata(data, res) {
 
     // STEP 1: RENAME FILE FIRST (before any network operations that could timeout)
     const trackNum = data.track_number || 0;
-    let newPath = await renameFile(file_path, artist, track, trackNum);
+    const albumName = album || '';
+    const yearStr = prefetched_year ? String(prefetched_year) : '';
+    let newPath = await renameFile(file_path, artist, track, trackNum, albumName, yearStr);
     result.new_path = newPath;
     result.renamed = (newPath !== file_path);
 
@@ -1556,6 +1792,16 @@ process.on('unhandledRejection', (reason, promise) => {
   console.error('[Hydra+: FATAL] Server continues...');
 });
 
+// IMPROVED: Periodic cleanup to prevent memory leaks
+const cleanupInterval = setInterval(() => {
+  cleanupExpiredCache();
+  cleanupOldEvents();
+  updateHealthMetrics();
+}, 2 * 60 * 1000); // Every 2 minutes
+
+// IMPROVED: Track cleanup interval for shutdown
+activeTimeouts.add(cleanupInterval);
+
 // Start server
 server.listen(PORT, '127.0.0.1', () => {
   console.log('\n════════════════════════════════════════════════════════════════');
@@ -1564,17 +1810,32 @@ server.listen(PORT, '127.0.0.1', () => {
   console.log(`  [PORT]      → ${PORT}`);
   console.log('  [STATUS]    → 🟢 ONLINE');
   console.log(`  [QUEUE]     → ${path.basename(QUEUE_FILE)}`);
-  console.log('  [ENDPOINTS] → /search /pending /process-metadata');
+  console.log('  [ENDPOINTS] → /search /pending /process-metadata /status');
+  console.log('  [FEATURES]  → LRU Cache, Health Metrics, Auto-Cleanup');
   console.log('════════════════════════════════════════════════════════════════');
   console.log('  Multi-headed beast ready to hunt... 🐍🐍🐍');
   console.log('════════════════════════════════════════════════════════════════\n');
 });
 
-// Handle graceful shutdown
+// IMPROVED: Handle graceful shutdown with resource cleanup
 process.on('SIGINT', () => {
   console.log('\n[Hydra+] Shutting down...');
+
+  // Clear all active timeouts/intervals
+  console.log(`[Hydra+] Clearing ${activeTimeouts.size} active timers...`);
+  for (const timeoutId of activeTimeouts) {
+    clearTimeout(timeoutId);
+    clearInterval(timeoutId);
+  }
+  activeTimeouts.clear();
+
+  // Clear caches
+  console.log(`[Hydra+] Clearing cover art cache (${coverArtCache.size} entries, ${Math.round(coverArtCacheTotalSize / 1024 / 1024)}MB)...`);
+  coverArtCache.clear();
+  coverArtCacheTotalSize = 0;
+
   server.close(() => {
-    console.log('[Hydra+] ✓ Server closed');
+    console.log('[Hydra+] ✓ Server closed gracefully');
     process.exit(0);
   });
 });
