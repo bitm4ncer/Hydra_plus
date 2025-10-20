@@ -60,6 +60,7 @@ const CREDENTIALS_FILE = path.join(__dirname, 'spotify-credentials.json');
 // Metadata processing queue to prevent concurrent processing
 const metadataQueue = [];
 let isProcessingMetadata = false;
+let activeProcessingCount = 0; // Track number of tracks currently being processed
 
 // IMPROVED: LRU Cover art cache with size limits to prevent memory leaks
 // Key: imageUrl, Value: { buffer: Buffer, timestamp: number, size: number }
@@ -132,12 +133,13 @@ function cleanupOldEvents() {
 }
 
 // Add event to tracking (for popup console)
-function addEvent(type, message) {
+function addEvent(type, message, trackId = null) {
   const event = {
     id: ++eventIdCounter,
     type: type, // 'info', 'success', 'error', 'warning'
     message: message,
-    timestamp: new Date().toISOString()
+    timestamp: new Date().toISOString(),
+    trackId: trackId // Optional: for color-coding concurrent tracks in popup
   };
 
   events.push(event);
@@ -388,9 +390,12 @@ const server = http.createServer((req, res) => {
 
         const success = addToQueue(searchData);
 
+        // Create trackId for color coding
+        const trackId = searchData.track_id || `${searchData.artist}-${searchData.track}`.replace(/[^a-zA-Z0-9]/g, '').substring(0, 20);
+
         if (success) {
-          // Add event for popup console
-          addEvent('success', `Track queued: ${searchData.artist} - ${searchData.track}`);
+          // Add event for popup console with trackId
+          addEvent('info', `Queued: ${searchData.artist} - ${searchData.track}`, trackId);
 
           res.writeHead(200, { 'Content-Type': 'application/json' });
           res.end(JSON.stringify({
@@ -398,7 +403,7 @@ const server = http.createServer((req, res) => {
             message: 'Search added to queue'
           }));
         } else {
-          addEvent('error', `Failed to queue track: ${searchData.artist} - ${searchData.track}`);
+          addEvent('error', `Failed to queue: ${searchData.artist} - ${searchData.track}`, trackId);
 
           res.writeHead(500, { 'Content-Type': 'application/json' });
           res.end(JSON.stringify({
@@ -462,9 +467,12 @@ const server = http.createServer((req, res) => {
 
         const success = addToQueue(albumSearchData);
 
+        // Create trackId for album (use album name for consistent color)
+        const albumTrackId = `album-${data.album_artist}-${data.album_name}`.replace(/[^a-zA-Z0-9]/g, '').substring(0, 20);
+
         if (success) {
-          // Add event for popup console
-          addEvent('success', `Album queued: ${data.album_artist} - ${data.album_name} (${data.tracks.length} tracks)`);
+          // Add event for popup console with albumTrackId
+          addEvent('info', `Queued album: ${data.album_artist} - ${data.album_name} (${data.tracks.length} tracks)`, albumTrackId);
 
           res.writeHead(200, { 'Content-Type': 'application/json' });
           res.end(JSON.stringify({
@@ -473,7 +481,7 @@ const server = http.createServer((req, res) => {
           }));
           console.log(`[Hydra+: ALBUM] ✓ QUEUED → ${data.album_artist} - ${data.album_name} (${data.tracks.length} tracks)`);
         } else {
-          addEvent('error', `Failed to queue album: ${data.album_artist} - ${data.album_name}`);
+          addEvent('error', `Failed to queue album: ${data.album_artist} - ${data.album_name}`, albumTrackId);
 
           res.writeHead(500, { 'Content-Type': 'application/json' });
           res.end(JSON.stringify({
@@ -514,6 +522,7 @@ const server = http.createServer((req, res) => {
         uptime: uptimeSeconds,
         queueSize: queue.searches.length,
         unprocessed: queue.searches.filter(s => !s.processed).length,
+        processing: activeProcessingCount, // Number of tracks currently being processed
         events: events, // Recent events for popup console
         health: {
           memory: {
@@ -1305,8 +1314,14 @@ async function processMetadata(data, res) {
 
   console.log(`[Hydra+: META] >> PROCESSING << ${path.basename(file_path)}`);
 
-  // Add event for popup console
-  addEvent('info', `Processing metadata: ${artist} - ${track}`);
+  // Track active processing
+  activeProcessingCount++;
+
+  // Create a unique trackId for color-coding in popup (use file path hash or track_id)
+  const popupTrackId = track_id || `${artist}-${track}`.replace(/[^a-zA-Z0-9]/g, '').substring(0, 20);
+
+  // Add event for popup console with trackId for color coding
+  addEvent('info', `Processing: ${artist} - ${track}`, popupTrackId);
 
   const result = {
     success: true,
@@ -1325,7 +1340,7 @@ async function processMetadata(data, res) {
   try {
     // Check if file exists
     if (!fs.existsSync(file_path)) {
-      addEvent('error', `File not found: ${path.basename(file_path)}`);
+      addEvent('error', `File not found: ${path.basename(file_path)}`, popupTrackId);
       throw new Error('File not found');
     }
 
@@ -1588,21 +1603,26 @@ async function processMetadata(data, res) {
             if (apiMeta.label) console.log(`[Hydra+: META]   Label: ${apiMeta.label}`);
             if (coverData) console.log(`[Hydra+: META]   Cover: embedded`);
 
-            // Add success event for popup console
-            addEvent('success', `Metadata complete: ${artist} - ${track}`);
+            // Add success event for popup console with trackId
+            addEvent('success', `Complete: ${artist} - ${track}`, popupTrackId);
           } else {
             console.error(`[Hydra+: META] ✗ Metadata write failed`);
-            addEvent('warning', `Metadata write failed: ${artist} - ${track}`);
+            addEvent('warning', `Metadata write failed: ${artist} - ${track}`, popupTrackId);
           }
         } catch (bgError) {
           // Catch any errors in background processing to prevent server crash
           console.error(`[Hydra+: META] ✗ Background processing error: ${bgError.message}`);
           console.error(`[Hydra+: META] Stack: ${bgError.stack}`);
+        } finally {
+          // Always decrement counter when background processing finishes
+          activeProcessingCount = Math.max(0, activeProcessingCount - 1);
         }
       })().catch((asyncError) => {
         // Additional safety net for async errors
         console.error(`[Hydra+: META] ✗ Async processing error: ${asyncError.message}`);
         console.error(`[Hydra+: META] Stack: ${asyncError.stack}`);
+        // Decrement counter on async errors too
+        activeProcessingCount = Math.max(0, activeProcessingCount - 1);
       });
     }, 500); // 500ms delay to prevent concurrent background job pile-up
 
@@ -1613,6 +1633,12 @@ async function processMetadata(data, res) {
     console.error(`[Hydra+: META] Stack: ${error.stack}`);
     result.success = false;
     result.error = error.message;
+
+    // Decrement processing counter on error
+    activeProcessingCount = Math.max(0, activeProcessingCount - 1);
+
+    // Add error event with trackId
+    addEvent('error', `Failed: ${artist} - ${track} (${error.message})`, popupTrackId);
 
     // Send error response if we haven't sent one yet
     if (!res.headersSent) {

@@ -24,22 +24,49 @@ const resetServerBtn = document.getElementById('resetServerBtn');
 const consoleContainer = document.getElementById('consoleContainer');
 const consoleContent = document.getElementById('consoleContent');
 const toggleConsoleBtn = document.getElementById('toggleConsoleBtn');
-const patternPreset = document.getElementById('patternPreset');
+const clearConsoleBtn = document.getElementById('clearConsoleBtn');
+const singlePresetDots = document.getElementById('singlePresetDots');
+const albumPresetDots = document.getElementById('albumPresetDots');
 const singleTrackPattern = document.getElementById('singleTrackPattern');
 const albumTrackPattern = document.getElementById('albumTrackPattern');
 const patternPreview = document.getElementById('patternPreview');
 const patternPreviewAlbum = document.getElementById('patternPreviewAlbum');
+const fileNamingContainer = document.getElementById('fileNamingContainer');
+const toggleFileNamingBtn = document.getElementById('toggleFileNamingBtn');
 
 // Console management
 const MAX_CONSOLE_ENTRIES = 50;
 let consoleEvents = [];
 
+// Track color assignments for concurrent tracks
+const trackColors = ['#B9FF37', '#6a9fb5', '#ffa500', '#ff6ec7', '#7fff00', '#00bfff', '#ff4500', '#9370db'];
+let trackColorMap = new Map(); // trackId -> color
+let nextColorIndex = 0;
+
+// Get or assign color for a track
+function getTrackColor(trackId) {
+  if (!trackId) return null;
+
+  if (!trackColorMap.has(trackId)) {
+    trackColorMap.set(trackId, trackColors[nextColorIndex % trackColors.length]);
+    nextColorIndex++;
+
+    // Clean up old track colors if map gets too large
+    if (trackColorMap.size > 20) {
+      const entries = Array.from(trackColorMap.entries());
+      trackColorMap = new Map(entries.slice(-10)); // Keep last 10
+    }
+  }
+
+  return trackColorMap.get(trackId);
+}
+
 // Add event to console
-function addConsoleEvent(type, message, timestamp = null) {
+function addConsoleEvent(type, message, timestamp = null, trackId = null) {
   const time = timestamp ? new Date(timestamp) : new Date();
   const timeStr = time.toLocaleTimeString('en-US', { hour12: false });
 
-  const event = { type, message, time: timeStr, timestamp: time };
+  const event = { type, message, time: timeStr, timestamp: time, trackId };
   consoleEvents.push(event);
 
   // Keep only last MAX_CONSOLE_ENTRIES
@@ -50,8 +77,14 @@ function addConsoleEvent(type, message, timestamp = null) {
   // Add to DOM
   const entry = document.createElement('div');
   entry.className = `console-entry console-${type}`;
+
+  // Add track color indicator if trackId provided
+  const trackColor = getTrackColor(trackId);
+  const colorDot = trackColor ? `<span class="track-color-dot" style="background-color: ${trackColor};"></span>` : '';
+
   entry.innerHTML = `
     <span class="console-time">${timeStr}</span>
+    ${colorDot}
     <span class="console-message">${message}</span>
   `;
 
@@ -82,8 +115,14 @@ function loadConsoleEvents() {
       consoleEvents.forEach(event => {
         const entry = document.createElement('div');
         entry.className = `console-entry console-${event.type}`;
+
+        // Add track color indicator if trackId exists
+        const trackColor = getTrackColor(event.trackId);
+        const colorDot = trackColor ? `<span class="track-color-dot" style="background-color: ${trackColor};"></span>` : '';
+
         entry.innerHTML = `
           <span class="console-time">${event.time}</span>
+          ${colorDot}
           <span class="console-message">${event.message}</span>
         `;
         consoleContent.appendChild(entry);
@@ -95,10 +134,38 @@ function loadConsoleEvents() {
   });
 }
 
+// Clear console button
+clearConsoleBtn.addEventListener('click', () => {
+  // Clear events array
+  consoleEvents = [];
+
+  // Clear track color map to reset colors
+  trackColorMap.clear();
+  nextColorIndex = 0;
+
+  // Clear DOM
+  consoleContent.innerHTML = '<div class="console-entry console-info"><span class="console-time">--:--:--</span><span class="console-message">Console cleared</span></div>';
+
+  // Clear storage
+  chrome.storage.local.set({ consoleEvents: [] });
+
+  // Add a brief confirmation message that will be replaced by next event
+  setTimeout(() => {
+    consoleContent.innerHTML = '<div class="console-entry console-info"><span class="console-time">--:--:--</span><span class="console-message">Waiting for events...</span></div>';
+  }, 1000);
+});
+
 // Toggle console visibility
 toggleConsoleBtn.addEventListener('click', () => {
   const isCollapsed = consoleContainer.classList.toggle('collapsed');
   toggleConsoleBtn.textContent = isCollapsed ? 'Show' : 'Hide';
+
+  // Add accent color when showing "Show"
+  if (isCollapsed) {
+    toggleConsoleBtn.classList.add('toggle-show');
+  } else {
+    toggleConsoleBtn.classList.remove('toggle-show');
+  }
 
   // Save preference
   chrome.storage.local.set({ consoleCollapsed: isCollapsed });
@@ -109,6 +176,32 @@ chrome.storage.local.get(['consoleCollapsed'], (data) => {
   if (data.consoleCollapsed) {
     consoleContainer.classList.add('collapsed');
     toggleConsoleBtn.textContent = 'Show';
+    toggleConsoleBtn.classList.add('toggle-show');
+  }
+});
+
+// Toggle file naming section visibility
+toggleFileNamingBtn.addEventListener('click', () => {
+  const isCollapsed = fileNamingContainer.classList.toggle('collapsed');
+  toggleFileNamingBtn.textContent = isCollapsed ? 'Show' : 'Hide';
+
+  // Add accent color when showing "Show"
+  if (isCollapsed) {
+    toggleFileNamingBtn.classList.add('toggle-show');
+  } else {
+    toggleFileNamingBtn.classList.remove('toggle-show');
+  }
+
+  // Save preference
+  chrome.storage.local.set({ fileNamingCollapsed: isCollapsed });
+});
+
+// Load file naming collapse state
+chrome.storage.local.get(['fileNamingCollapsed'], (data) => {
+  if (data.fileNamingCollapsed) {
+    fileNamingContainer.classList.add('collapsed');
+    toggleFileNamingBtn.textContent = 'Show';
+    toggleFileNamingBtn.classList.add('toggle-show');
   }
 });
 
@@ -322,7 +415,21 @@ async function checkServerStatus() {
       const data = await response.json();
       serverStatus.classList.remove('offline');
       serverStatus.classList.add('online');
-      serverStatusText.textContent = `Server online • ${data.unprocessed || 0} pending`;
+
+      // Enhanced status display with more insights
+      let statusParts = ['Server online'];
+
+      // Show processing status if available
+      if (data.processing > 0) {
+        statusParts.push(`<span style="color: #B9FF37;">${data.processing} active</span>`);
+      }
+
+      // Show queue size if available
+      if (data.unprocessed > 0) {
+        statusParts.push(`${data.unprocessed} queued`);
+      }
+
+      serverStatusText.innerHTML = statusParts.join(' • ');
 
       const wasOffline = !isServerOnline;
       isServerOnline = true;
@@ -332,6 +439,7 @@ async function checkServerStatus() {
       if (wasOffline) {
         sendCredentialsToServer();
         sendPatternsToServer();
+        // Only log connection once when transitioning from offline to online
         addConsoleEvent('success', 'Bridge server connected');
       }
 
@@ -346,8 +454,8 @@ async function checkServerStatus() {
             lastEventId = event.id;
           }
 
-          // Add to console with appropriate type
-          addConsoleEvent(event.type || 'info', event.message, event.timestamp);
+          // Add to console with appropriate type and track ID for color coding
+          addConsoleEvent(event.type || 'info', event.message, event.timestamp, event.trackId);
         });
 
         // Store last event ID
@@ -667,8 +775,8 @@ function generatePreview(pattern, includeTrackNum = false) {
 
 // Update preview displays
 function updatePreviews() {
-  const singlePattern = singleTrackPattern.value || '{artist} - {track}';
-  const albumPattern = albumTrackPattern.value || '{trackNum} {artist} - {track}';
+  const singlePattern = singleTrackPattern.value || singleTrackPattern.placeholder || '{artist} - {track}';
+  const albumPattern = albumTrackPattern.value || albumTrackPattern.placeholder || '{trackNum} {artist} - {track}';
 
   patternPreview.textContent = generatePreview(singlePattern, false);
   patternPreviewAlbum.textContent = generatePreview(albumPattern, true);
@@ -704,6 +812,79 @@ async function sendPatternToServer(singlePattern, albumPattern) {
   }
 }
 
+// Preset pattern definitions for each field
+const singleTrackPresets = [
+  'custom',
+  '{artist} - {track}',
+  '{track}',
+  '{artist} - {track} ({year})'
+];
+
+const albumTrackPresets = [
+  'custom',
+  '{trackNum} {artist} - {track}',
+  '{trackNum} - {track}',
+  '{trackNum} {track}',
+  '{trackNum} - {album} - {track}'
+];
+
+// Update active dot for a specific field
+function updateActiveDot(dotsContainer, pattern, presets) {
+  const dots = dotsContainer.querySelectorAll('.preset-dot');
+  let activeIndex = -1;
+
+  // Find matching preset
+  if (pattern) {
+    activeIndex = presets.indexOf(pattern);
+  }
+
+  // If no match or empty, activate custom (index 0)
+  if (activeIndex === -1) {
+    activeIndex = 0;
+  }
+
+  // Update dots
+  dots.forEach((dot, i) => {
+    if (i === activeIndex) {
+      dot.classList.add('active');
+    } else {
+      dot.classList.remove('active');
+    }
+  });
+}
+
+// Apply preset to a specific field
+function applyPresetToField(inputField, pattern, dotsContainer, presets) {
+  if (pattern === 'custom') {
+    inputField.value = '';
+    inputField.focus();
+  } else {
+    inputField.value = pattern;
+  }
+
+  updateActiveDot(dotsContainer, pattern, presets);
+  updatePreviews();
+  savePatterns();
+}
+
+// Handle single track preset dots
+singlePresetDots.addEventListener('click', (e) => {
+  const dot = e.target.closest('.preset-dot');
+  if (!dot) return;
+
+  const pattern = dot.getAttribute('data-preset');
+  applyPresetToField(singleTrackPattern, pattern, singlePresetDots, singleTrackPresets);
+});
+
+// Handle album track preset dots
+albumPresetDots.addEventListener('click', (e) => {
+  const dot = e.target.closest('.preset-dot');
+  if (!dot) return;
+
+  const pattern = dot.getAttribute('data-preset');
+  applyPresetToField(albumTrackPattern, pattern, albumPresetDots, albumTrackPresets);
+});
+
 // Load saved patterns
 function loadPatterns() {
   chrome.storage.sync.get(['singleTrackPattern', 'albumTrackPattern'], (data) => {
@@ -713,8 +894,9 @@ function loadPatterns() {
     singleTrackPattern.value = singlePattern;
     albumTrackPattern.value = albumPattern;
 
-    // Check if current pattern matches a preset
-    updatePresetSelection(singlePattern);
+    // Update dots for each field independently
+    updateActiveDot(singlePresetDots, singlePattern, singleTrackPresets);
+    updateActiveDot(albumPresetDots, albumPattern, albumTrackPresets);
 
     updatePreviews();
 
@@ -722,37 +904,6 @@ function loadPatterns() {
     sendPatternToServer(singlePattern, albumPattern);
   });
 }
-
-// Update preset dropdown based on current single track pattern
-function updatePresetSelection(pattern) {
-  const presetOptions = Array.from(patternPreset.options);
-  const matchingOption = presetOptions.find(opt => opt.value === pattern);
-
-  if (matchingOption) {
-    patternPreset.value = pattern;
-  } else {
-    patternPreset.value = 'custom';
-  }
-}
-
-// Preset dropdown change handler
-patternPreset.addEventListener('change', () => {
-  const selectedValue = patternPreset.value;
-
-  if (selectedValue !== 'custom') {
-    singleTrackPattern.value = selectedValue;
-
-    // Set default album pattern based on preset
-    if (selectedValue.includes('{trackNum}')) {
-      albumTrackPattern.value = selectedValue;
-    } else {
-      albumTrackPattern.value = '{trackNum} ' + selectedValue;
-    }
-
-    // Save and update
-    savePatterns();
-  }
-});
 
 // Input change handlers with debouncing
 let patternSaveTimeout;
@@ -768,18 +919,21 @@ function savePatterns() {
     }, () => {
       console.log('[Hydra+] Patterns saved:', { singlePattern, albumPattern });
       updatePreviews();
-      updatePresetSelection(singlePattern);
       sendPatternToServer(singlePattern, albumPattern);
     });
   }, 500);
 }
 
 singleTrackPattern.addEventListener('input', () => {
+  // Update dots based on current value
+  updateActiveDot(singlePresetDots, singleTrackPattern.value, singleTrackPresets);
   updatePreviews();
   savePatterns();
 });
 
 albumTrackPattern.addEventListener('input', () => {
+  // Update dots based on current value
+  updateActiveDot(albumPresetDots, albumTrackPattern.value, albumTrackPresets);
   updatePreviews();
   savePatterns();
 });

@@ -18,6 +18,34 @@
       margin: 0;
       background: #121212;
       color: #ffffff;
+      overflow-y: auto;
+      overflow-x: hidden;
+    }
+
+    /* Custom pill scrollbar for popup body */
+    body::-webkit-scrollbar {
+      width: 8px;
+    }
+
+    body::-webkit-scrollbar-track {
+      background: transparent;
+      margin: 10px 0;
+    }
+
+    body::-webkit-scrollbar-thumb {
+      background: #404040;
+      border-radius: 10px;
+      border: 2px solid #121212;
+      transition: background 0.2s ease;
+    }
+
+    body::-webkit-scrollbar-thumb:hover {
+      background: #535353;
+      border-color: #B9FF37;
+    }
+
+    body::-webkit-scrollbar-thumb:active {
+      background: #B9FF37;
     }
 
     .header {
@@ -142,6 +170,8 @@
       padding: 12px;
       background: #1a1a1a;
       border-radius: 8px;
+      border: 1px solid #121212;
+      box-shadow: inset 1px 1px 3px #000000, 0 1px 0 #474747;
     }
 
     .input-label {
@@ -259,6 +289,17 @@
       cursor: not-allowed;
     }
 
+    /* Toggle button accent state (when section is hidden) */
+    .reset-connection-btn.toggle-show {
+      background: #B9FF37;
+      color: #121212;
+    }
+
+    .reset-connection-btn.toggle-show:hover {
+      background: #c7ff5a;
+      color: #121212;
+    }
+
     /* Format preference labels */
     .format-label {
       font-size: 13px;
@@ -317,10 +358,6 @@
     }
 
 
-    #credentialsSection{
-          border: 1px solid #121212;
-    box-shadow: inset 1px 1px 3px #000000, 0 1px 0 #474747;
-    }
 
     #downloadMetadataSettings {
       padding: 16px;
@@ -346,6 +383,46 @@
       max-height: 0;
     }
 
+    /* Collapsible sections */
+    .collapsible-container {
+      max-height: 1000px;
+      overflow: hidden;
+      transition: max-height 0.3s ease, opacity 0.2s ease;
+      opacity: 1;
+    }
+
+    .collapsible-container.collapsed {
+      max-height: 0;
+      opacity: 0;
+      padding: 0 !important;
+      margin: 0 !important;
+    }
+
+    /* Preset pattern dots */
+    .preset-dot {
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      background: #404040;
+      border: 1px solid #282828;
+      cursor: pointer;
+      transition: all 0.2s ease;
+      padding: 0;
+      flex-shrink: 0;
+    }
+
+    .preset-dot:hover {
+      background: #535353;
+      border-color: #B9FF37;
+      transform: scale(1.2);
+    }
+
+    .preset-dot.active {
+      background: #B9FF37;
+      border-color: #c7ff5a;
+      box-shadow: 0 0 6px #B9FF37;
+    }
+
     .console-content {
       max-height: 100px;
       padding: 8px 10px;
@@ -354,23 +431,30 @@
       line-height: 1.4;
     }
 
-    /* Custom scrollbar */
+    /* Custom pill scrollbar for console */
     .console-content::-webkit-scrollbar {
       width: 6px;
     }
 
     .console-content::-webkit-scrollbar-track {
-      background: #121212;
-      border-radius: 3px;
+      background: transparent;
+      margin: 4px 0;
     }
 
     .console-content::-webkit-scrollbar-thumb {
       background: #404040;
-      border-radius: 3px;
+      border-radius: 10px;
+      border: 1px solid #121212;
+      transition: background 0.2s ease;
     }
 
     .console-content::-webkit-scrollbar-thumb:hover {
-      background: #505050;
+      background: #535353;
+      border-color: #B9FF37;
+    }
+
+    .console-content::-webkit-scrollbar-thumb:active {
+      background: #B9FF37;
     }
 
     .console-entry {
@@ -378,6 +462,7 @@
       display: flex;
       gap: 8px;
       border-bottom: 1px solid #222222;
+      align-items: center;
     }
 
     .console-entry:last-child {
@@ -388,6 +473,15 @@
       color: #6a6a6a;
       flex-shrink: 0;
       min-width: 50px;
+    }
+
+    .track-color-dot {
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      flex-shrink: 0;
+      box-shadow: 0 0 4px currentColor;
+      margin-left: 2px;
     }
 
     .console-message {
@@ -454,9 +548,14 @@ $$$$$$$ ` $$$$$$ ;$$$$;  $$$$l$$$$;  $$$$;   $$$$     $$$$;   $$$$$$~  :$$$$$$$$
   <div id="consoleSection" style="margin-top: 16px;">
     <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
       <div class="setting-label" style="margin: 0;">Activity Log</div>
-      <button id="toggleConsoleBtn" class="reset-connection-btn" style="padding: 3px 10px; font-size: 9px;">
-        Hide
-      </button>
+      <div style="display: flex; gap: 6px;">
+        <button id="clearConsoleBtn" class="reset-connection-btn" style="padding: 3px 10px; font-size: 9px;">
+          Clear
+        </button>
+        <button id="toggleConsoleBtn" class="reset-connection-btn" style="padding: 3px 10px; font-size: 9px;">
+          Hide
+        </button>
+      </div>
     </div>
     <div id="consoleContainer" class="console-container">
       <div id="consoleContent" class="console-content">
@@ -548,38 +647,43 @@ $$$$$$$ ` $$$$$$ ;$$$$;  $$$$l$$$$;  $$$$;   $$$$     $$$$;   $$$$$$~  :$$$$$$$$
     </div>
   </div>
 
-    <!-- File Naming Pattern Setting -->
-    <div class="setting" id="fileNamingSection" style="border-top: 1px solid #282828; padding-top: 16px; margin-top: 16px;">
-      <div style="width: 100%;">
-        <div class="setting-label" style="margin-bottom: 12px;">File Naming Pattern</div>
+    <!-- File Naming Pattern Section -->
+    <div id="fileNamingSection" style="margin-top: 16px;">
+      <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
+        <div class="setting-label" style="margin: 0;">File Naming Pattern</div>
+        <button id="toggleFileNamingBtn" class="reset-connection-btn" style="padding: 3px 10px; font-size: 9px;">
+          Hide
+        </button>
+      </div>
 
-        <!-- Preset Patterns Dropdown -->
+      <div id="fileNamingContainer" class="input-group collapsible-container">
+        <!-- Single Track Pattern Input -->
         <div style="margin-bottom: 12px;">
-          <label class="input-label">Quick Presets</label>
-          <select id="patternPreset" style="width: 100%; padding: 8px 10px; background: #282828; border: 1px solid #404040; border-radius: 4px; color: #ffffff; font-size: 12px; cursor: pointer;">
-            <option value="custom">Custom Pattern</option>
-            <option value="{artist} - {track}">{artist} - {track}</option>
-            <option value="{trackNum} {artist} - {track}">{trackNum} {artist} - {track}</option>
-            <option value="{trackNum} - {track}">{trackNum} - {track}</option>
-            <option value="{track}">{track}</option>
-            <option value="{artist} - {track} ({year})">{artist} - {track} ({year})</option>
-            <option value="{trackNum} - {album} - {track}">{trackNum} - {album} - {track}</option>
-          </select>
-        </div>
-
-        <!-- Custom Pattern Input -->
-        <div style="margin-bottom: 8px;">
           <label class="input-label">Single Track Pattern</label>
-          <input type="text" id="singleTrackPattern" placeholder="{artist} - {track}" style="font-family: monospace; font-size: 11px;">
+          <input type="text" id="singleTrackPattern" placeholder="{artist} - {track}" style="font-family: monospace; font-size: 11px; margin-bottom: 6px;">
+          <div id="singlePresetDots" class="preset-dots-container" style="display: flex; gap: 6px;">
+            <button class="preset-dot" data-preset="custom" title="Custom"></button>
+            <button class="preset-dot active" data-preset="{artist} - {track}" title="{artist} - {track}"></button>
+            <button class="preset-dot" data-preset="{track}" title="{track}"></button>
+            <button class="preset-dot" data-preset="{artist} - {track} ({year})" title="{artist} - {track} ({year})"></button>
+          </div>
         </div>
 
+        <!-- Album Track Pattern Input -->
         <div style="margin-bottom: 12px;">
           <label class="input-label">Album Track Pattern</label>
-          <input type="text" id="albumTrackPattern" placeholder="{trackNum} {artist} - {track}" style="font-family: monospace; font-size: 11px;">
+          <input type="text" id="albumTrackPattern" placeholder="{trackNum} {artist} - {track}" style="font-family: monospace; font-size: 11px; margin-bottom: 6px;">
+          <div id="albumPresetDots" class="preset-dots-container" style="display: flex; gap: 6px;">
+            <button class="preset-dot" data-preset="custom" title="Custom"></button>
+            <button class="preset-dot active" data-preset="{trackNum} {artist} - {track}" title="{trackNum} {artist} - {track}"></button>
+            <button class="preset-dot" data-preset="{trackNum} - {track}" title="{trackNum} - {track}"></button>
+            <button class="preset-dot" data-preset="{trackNum} {track}" title="{trackNum} {track}"></button>
+            <button class="preset-dot" data-preset="{trackNum} - {album} - {track}" title="{trackNum} - {album} - {track}"></button>
+          </div>
         </div>
 
         <!-- Available Tokens Reference -->
-        <div class="description" style="margin-bottom: 8px;">
+        <div class="description" style="margin-bottom: 12px;">
           Available tokens: <br><span style="color: #B9FF37; font-family: monospace; font-size: 11px;">{artist}</span>,
           <span style="color: #B9FF37; font-family: monospace; font-size: 11px;">{track}</span>,
           <span style="color: #B9FF37; font-family: monospace; font-size: 11px;">{trackNum}</span>,
@@ -588,7 +692,7 @@ $$$$$$$ ` $$$$$$ ;$$$$;  $$$$l$$$$;  $$$$;   $$$$     $$$$;   $$$$$$~  :$$$$$$$$
         </div>
 
         <!-- Live Preview -->
-        <div style="background: #1a1a1a; padding: 10px; border-radius: 4px; border: 1px solid #282828;">
+        <div style="background: #0a0a0a; padding: 10px; border-radius: 4px; border: 1px solid #282828;">
           <div class="input-label" style="margin-bottom: 6px;">Preview:</div>
           <div id="patternPreview" style="font-family: monospace; font-size: 11px; color: #B9FF37; word-break: break-all;">
             Prince - Purple Rain.mp3
