@@ -641,6 +641,15 @@ class Plugin(BasePlugin):
                         if not hasattr(transfer, 'size') or not hasattr(transfer, 'current_byte_offset'):
                             continue
 
+                        # Skip completed downloads (only monitor active downloads)
+                        # Check if transfer has a status attribute and if it's finished
+                        if hasattr(transfer, 'status') and transfer.status in ('Finished', 'Paused', 'Filtered'):
+                            continue
+
+                        # Skip downloads that are no longer in our active tracking
+                        if virtual_path not in self.active_downloads:
+                            continue
+
                         # Get progress data
                         total_bytes = transfer.size
                         bytes_downloaded = transfer.current_byte_offset or 0

@@ -349,13 +349,6 @@ function updateProgressBars(activeDownloads) {
         fill.style.backgroundColor = trackColor || '#B9FF37';
       }
 
-      // Update completed state
-      if (isComplete && !barContainer.classList.contains('completed')) {
-        barContainer.classList.add('completed');
-      } else if (!isComplete && barContainer.classList.contains('completed')) {
-        barContainer.classList.remove('completed');
-      }
-
       // Update tooltip
       barContainer.title = filename;
     }
