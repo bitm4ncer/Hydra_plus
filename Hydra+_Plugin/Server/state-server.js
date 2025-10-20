@@ -22,6 +22,7 @@ const path = require('path');
 const PORT = 3847;
 const QUEUE_FILE = path.join(__dirname, 'nicotine-queue.json');
 const CREDENTIALS_FILE = path.join(__dirname, 'spotify-credentials.json');
+const DEBUG_SETTINGS_FILE = path.join(__dirname, 'debug-settings.json');
 
 // Health metrics
 const healthMetrics = {
@@ -52,6 +53,11 @@ let spotifyCredentials = {
 let renamePatterns = {
   singleTrack: '{artist} - {track}',
   albumTrack: '{trackNum} {artist} - {track}'
+};
+
+// Debug mode setting (controls terminal window visibility)
+let debugMode = {
+  debugWindows: false
 };
 
 // ============================================================================
@@ -185,6 +191,38 @@ async function saveSpotifyCredentials() {
     console.log('[Hydra+ STATE] ✓ Credentials saved');
   } catch (error) {
     console.error('[Hydra+ STATE] ✗ Error saving credentials:', error.message);
+  }
+}
+
+/**
+ * Load debug settings from file
+ */
+async function loadDebugSettings() {
+  try {
+    if (fs.existsSync(DEBUG_SETTINGS_FILE)) {
+      const data = await fsPromises.readFile(DEBUG_SETTINGS_FILE, 'utf8');
+      const settings = JSON.parse(data);
+      debugMode.debugWindows = settings.debugWindows || false;
+      console.log('[Hydra+ STATE] ✓ Loaded debug settings:', debugMode);
+    }
+  } catch (error) {
+    console.log('[Hydra+ STATE] No saved debug settings found (using defaults)');
+  }
+}
+
+/**
+ * Save debug settings to file
+ */
+async function saveDebugSettings() {
+  try {
+    await fsPromises.writeFile(
+      DEBUG_SETTINGS_FILE,
+      JSON.stringify(debugMode, null, 2),
+      'utf8'
+    );
+    console.log('[Hydra+ STATE] ✓ Debug settings saved');
+  } catch (error) {
+    console.error('[Hydra+ STATE] ✗ Error saving debug settings:', error.message);
   }
 }
 
@@ -669,6 +707,65 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
+  // ============================================================================
+  // POST /set-debug-mode - Save debug windows setting
+  // ============================================================================
+  if (req.method === 'POST' && req.url === '/set-debug-mode') {
+    let body = '';
+
+    req.on('data', chunk => {
+      body += chunk.toString();
+    });
+
+    req.on('end', async () => {
+      try {
+        const data = JSON.parse(body);
+        if (typeof data.debugWindows === 'boolean') {
+          debugMode.debugWindows = data.debugWindows;
+        }
+
+        // Persist to file
+        await saveDebugSettings();
+
+        console.log('[Hydra+ STATE] ✓ Debug mode updated and saved:', debugMode);
+
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: true, debugMode: debugMode }));
+      } catch (error) {
+        console.error('[Hydra+ STATE] ✗ Set debug mode error:', error);
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: false, error: error.message }));
+      }
+    });
+
+    return;
+  }
+
+  // ============================================================================
+  // GET /get-debug-mode - Get current debug windows setting
+  // ============================================================================
+  if (req.method === 'GET' && req.url === '/get-debug-mode') {
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ success: true, debugMode: debugMode }));
+    return;
+  }
+
+  // ============================================================================
+  // POST /restart - Restart the server
+  // ============================================================================
+  if (req.method === 'POST' && req.url === '/restart') {
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ success: true, message: 'Restarting server...' }));
+
+    // Exit gracefully - plugin will detect and restart
+    console.log('[Hydra+ STATE] ⚠️ Restart requested via API');
+    setTimeout(() => {
+      process.exit(0);
+    }, 500);
+
+    return;
+  }
+
   // 404 - Not Found
   res.writeHead(404, { 'Content-Type': 'text/plain' });
   res.end('Not Found');
@@ -680,6 +777,7 @@ const server = http.createServer(async (req, res) => {
 
 server.listen(PORT, async () => {
   await loadSpotifyCredentials();
+  await loadDebugSettings();
 
   // Set console window title on Windows
   if (process.platform === 'win32') {

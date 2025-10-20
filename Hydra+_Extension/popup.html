@@ -339,6 +339,15 @@
       transform: translateX(14px);
     }
 
+    /* Debug toggle - active state with green background */
+    .toggle-debug input:checked + .slider {
+      background-color: #B9FF37;
+    }
+
+    .toggle-debug input:checked + .slider:before {
+      background-color: #121212;
+    }
+
     .ascii-art {
       font-family: 'Courier New', monospace;
       font-size: 6px;
@@ -811,6 +820,17 @@ $$$$$$$ ` $$$$$$ ;$$$$;  $$$$l$$$$;  $$$$;   $$$$     $$$$;   $$$$$$~  :$$$$$$$$
           </div>
         </div>
       </div>
+    </div>
+
+    <!-- Enable Debug Setting -->
+    <div class="setting" style="margin-top: 16px;">
+      <div>
+        <div class="setting-label">Debug Mode</div>
+      </div>
+      <label class="toggle toggle-small toggle-debug">
+        <input type="checkbox" id="debugWindowsToggle">
+        <span class="slider"></span>
+      </label>
     </div>
   </div>
   </div>

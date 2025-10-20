@@ -206,22 +206,22 @@ if exist "package.json" (
         echo.
         echo  Verifying packages...
         if exist "node_modules\express" (
-            echo  [√] express installed
+            echo  [OK] express installed
         ) else (
             echo  [X] express MISSING
         )
         if exist "node_modules\cors" (
-            echo  [√] cors installed
+            echo  [OK] cors installed
         ) else (
             echo  [X] cors MISSING
         )
         if exist "node_modules\node-id3" (
-            echo  [√] node-id3 installed
+            echo  [OK] node-id3 installed
         ) else (
             echo  [X] node-id3 MISSING
         )
         if exist "node_modules\flac-tagger" (
-            echo  [√] flac-tagger installed
+            echo  [OK] flac-tagger installed
         ) else (
             echo  [X] flac-tagger MISSING
         )

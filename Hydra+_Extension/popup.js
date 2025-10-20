@@ -782,6 +782,7 @@ async function checkServerStatus() {
       if (wasOffline) {
         sendCredentialsToServer();
         sendPatternsToServer();
+        sendDebugSettingToServer();
         // Only log connection once when transitioning from offline to online
         addConsoleEvent('success', 'Bridge server connected');
       }
@@ -967,6 +968,31 @@ function sendPatternsToServer() {
   });
 }
 
+// Send debug windows setting to server
+function sendDebugSettingToServer() {
+  chrome.storage.sync.get(['debugWindows'], (data) => {
+    const debugWindows = data.debugWindows === true;
+
+    if (isServerOnline) {
+      fetch(`${BRIDGE_URL}/set-debug-mode`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          debugWindows: debugWindows
+        })
+      }).catch(err => {
+        if (isServerOnline) {
+          console.error('Failed to send debug setting to server:', err);
+        }
+      });
+
+      console.log('[Hydra+] Debug windows setting sent to server:', debugWindows);
+      const statusMsg = debugWindows ? '🐛 Debug mode enabled - restart required' : 'Debug mode disabled - restart required';
+      addConsoleEvent('info', statusMsg);
+    }
+  });
+}
+
 // Check server status on popup open
 checkServerStatus();
 
@@ -1033,6 +1059,7 @@ resetServerBtn.addEventListener('click', async () => {
             // Send credentials and patterns to server after restart
             sendCredentialsToServer();
             sendPatternsToServer();
+            sendDebugSettingToServer();
 
             // Log success
             addConsoleEvent('success', 'Bridge server restarted successfully');

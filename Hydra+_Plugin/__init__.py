@@ -92,12 +92,19 @@ class Plugin(BasePlugin):
         # Progress monitoring
         self.progress_thread = None  # Thread for monitoring download progress
         self.progress_running = False  # Flag to control progress monitoring thread
+        # Debug mode flag
+        self.debug_mode = False  # Set during initialization based on debug-settings.json
 
         # Get plugin directory and server paths
         self.plugin_dir = os.path.dirname(os.path.abspath(__file__))
         self.server_path = os.path.join(self.plugin_dir, 'Server', 'bridge-server.js')  # Legacy (will be replaced)
         self.state_server_path = os.path.join(self.plugin_dir, 'Server', 'state-server.js')
         self.metadata_worker_path = os.path.join(self.plugin_dir, 'Server', 'metadata-worker.js')
+
+    def debug_log(self, message):
+        """Log message only when debug mode is enabled."""
+        if self.debug_mode:
+            self.log(message)
 
     def _is_nicotine_online(self):
         """Check if Nicotine+ is connected to the Soulseek server."""
@@ -125,7 +132,7 @@ class Plugin(BasePlugin):
             return False
         except Exception as e:
             # Log error for debugging
-            self.log(f"[Hydra+] Error checking online status: {e}")
+            self.log(f" Error checking online status: {e}")
             # Assume online to avoid blocking - better to try and fail than never try
             return True
 
@@ -146,7 +153,7 @@ class Plugin(BasePlugin):
 
         # Check if package.json exists
         if not os.path.exists(package_json):
-            self.log("[Hydra+] WARNING: package.json not found, skipping dependency check")
+            self.log("WARNING: package.json not found, skipping dependency check")
             return True
 
         # Check if node_modules exists and has the required packages
@@ -166,8 +173,8 @@ class Plugin(BasePlugin):
             return True
 
         # Install missing packages
-        self.log(f"[Hydra+] Missing npm packages: {', '.join(missing_packages)}")
-        self.log("[Hydra+] Installing dependencies... (this may take a moment)")
+        self.log(f" Missing npm packages: {', '.join(missing_packages)}")
+        self.log("Installing dependencies... (this may take a moment)")
 
         try:
             startupinfo = None
@@ -187,108 +194,109 @@ class Plugin(BasePlugin):
             )
 
             if result.returncode == 0:
-                self.log("[Hydra+] SUCCESS: Dependencies installed successfully")
+                self.log("SUCCESS: Dependencies installed successfully")
                 return True
             else:
                 stderr_output = result.stderr.decode('utf-8', errors='ignore')
-                self.log(f"[Hydra+] ERROR: npm install failed: {stderr_output}")
+                self.log(f" ERROR: npm install failed: {stderr_output}")
                 return False
 
         except FileNotFoundError:
-            self.log("[Hydra+] ERROR: npm not found - please install Node.js")
+            self.log("ERROR: npm not found - please install Node.js")
             return False
         except subprocess.TimeoutExpired:
-            self.log("[Hydra+] ERROR: npm install timed out")
+            self.log("ERROR: npm install timed out")
             return False
         except Exception as e:
-            self.log(f"[Hydra+] ERROR: Error installing dependencies: {e}")
+            self.log(f" ERROR: Error installing dependencies: {e}")
             return False
 
     def _start_server(self):
         """Start both state server and metadata worker."""
         if not self.settings.get('auto_start_server', True):
-            self.log("[Hydra+] Auto-start disabled in settings")
+            self.log("Auto-start disabled in settings")
             return False
 
         if not os.path.exists(self.state_server_path):
-            self.log(f"[Hydra+] State server not found at: {self.state_server_path}")
+            self.log(f" State server not found at: {self.state_server_path}")
             return False
 
         if not os.path.exists(self.metadata_worker_path):
-            self.log(f"[Hydra+] Metadata worker not found at: {self.metadata_worker_path}")
+            self.log(f" Metadata worker not found at: {self.metadata_worker_path}")
             return False
 
         # Check and install dependencies if needed
         if not self._check_npm_dependencies():
-            self.log("[Hydra+] ERROR: Failed to install npm dependencies")
+            self.log("ERROR: Failed to install npm dependencies")
             return False
 
         try:
-            self.log(f"[Hydra+] Starting dual server architecture...")
-
-            # Determine if we should show console windows based on debug setting
-            # First, try to get debug setting from state server if it's already running
-            # Otherwise, use default (no console windows)
+            # Read debug setting from file BEFORE starting servers
             show_console = False
+            debug_settings_file = os.path.join(os.path.dirname(self.state_server_path), 'debug-settings.json')
 
-            # Try to fetch debug setting from state server if available
             try:
-                req = Request('http://127.0.0.1:3847/get-debug-mode', method='GET')
-                with urlopen(req, timeout=1) as response:
-                    if response.status == 200:
-                        data = json.loads(response.read().decode('utf-8'))
-                        if data.get('success') and data.get('debugMode'):
-                            show_console = data['debugMode'].get('debugWindows', False)
-                            self.log(f"[Hydra+] Debug windows setting from server: {show_console}")
-            except:
-                # State server not running yet or endpoint not available - use default
-                self.log("[Hydra+] Using default debug setting (console windows disabled)")
+                if os.path.exists(debug_settings_file):
+                    with open(debug_settings_file, 'r') as f:
+                        debug_data = json.load(f)
+                        show_console = debug_data.get('debugWindows', False)
+                        self.debug_mode = show_console  # Store debug mode flag
+            except Exception as e:
+                # Silent - only log errors if critical
                 pass
 
-            # Configure subprocess based on debug setting
-            startupinfo = None
-            creationflags = 0
-            if os.name == 'nt':  # Windows
-                startupinfo = subprocess.STARTUPINFO()
-                if show_console:
-                    # CREATE_NEW_CONSOLE flag creates a visible console window for each server
-                    creationflags = subprocess.CREATE_NEW_CONSOLE
-                    self.log("[Hydra+] Console windows enabled (debug mode)")
-                else:
-                    # Hide console windows - use STARTF_USESHOWWINDOW flag
-                    # This prevents terminal windows from appearing
-                    startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
-                    startupinfo.wShowWindow = 0  # SW_HIDE
-                    self.log("[Hydra+] Console windows hidden (normal mode)")
+            # In debug mode, start a combined debug console for both servers
+            if show_console and os.name == 'nt':
+                debug_console_path = os.path.join(os.path.dirname(self.state_server_path), 'debug-console.bat')
 
-            # Start State Server (Port 3847)
-            self.log(f"[Hydra+] Starting state server (Port 3847)...")
-            self.server_process = subprocess.Popen(
-                ['node', self.state_server_path],
-                startupinfo=startupinfo,
-                creationflags=creationflags
-            )
+                # Start the debug console which will run both servers
+                self.server_process = subprocess.Popen(
+                    ['cmd.exe', '/c', 'start', 'cmd.exe', '/k', debug_console_path],
+                    creationflags=subprocess.CREATE_NEW_CONSOLE
+                )
 
-            # Wait briefly for state server to initialize
-            time.sleep(1)
+                # Give it time to start both servers
+                time.sleep(2)
 
-            # Start Metadata Worker (Port 3848)
-            self.log(f"[Hydra+] Starting metadata worker (Port 3848)...")
-            self.metadata_process = subprocess.Popen(
-                ['node', self.metadata_worker_path],
-                startupinfo=startupinfo,
-                creationflags=creationflags
-            )
+                # Store a dummy metadata process reference (both are managed by debug console)
+                self.metadata_process = self.server_process
 
-            console_status = "visible consoles" if show_console else "hidden consoles"
-            self.log(f"[Hydra+] Both servers started with {console_status}, will verify in background")
+                # Show debug mode banner
+                self.log(f"▒▒▒▒▒ DEBUG MODE ENABLED ____ Check debug console for detailed logs")
+
+            else:
+                # Normal mode - run servers hidden in background
+                state_startupinfo = None
+                if os.name == 'nt':
+                    state_startupinfo = subprocess.STARTUPINFO()
+                    state_startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+                    state_startupinfo.wShowWindow = 0  # SW_HIDE
+
+                self.server_process = subprocess.Popen(
+                    ['node', self.state_server_path],
+                    startupinfo=state_startupinfo
+                )
+
+                time.sleep(1)
+
+                metadata_startupinfo = None
+                if os.name == 'nt':
+                    metadata_startupinfo = subprocess.STARTUPINFO()
+                    metadata_startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+                    metadata_startupinfo.wShowWindow = 0  # SW_HIDE
+
+                self.metadata_process = subprocess.Popen(
+                    ['node', self.metadata_worker_path],
+                    startupinfo=metadata_startupinfo
+                )
+
             return True
 
         except FileNotFoundError:
-            self.log("[Hydra+] ERROR: NODE.JS NOT FOUND - Please install Node.js")
+            self.log("ERROR: NODE.JS NOT FOUND - Please install Node.js")
             return False
         except Exception as e:
-            self.log(f"[Hydra+] ERROR: Starting servers failed: {e}")
+            self.log(f" ERROR: Starting servers failed: {e}")
             return False
 
     def _cleanup_server_process(self):
@@ -297,14 +305,14 @@ class Plugin(BasePlugin):
             # Terminate state server process
             if self.server_process:
                 try:
-                    self.log("[Hydra+] Terminating state server process...")
+                    self.log("Terminating state server process...")
                     self.server_process.terminate()
                     self.server_process.wait(timeout=3)
-                    self.log("[Hydra+] ✓ State server terminated")
+                    self.log("State server terminated")
                 except:
                     try:
                         self.server_process.kill()
-                        self.log("[Hydra+] ✓ State server killed (force)")
+                        self.log("State server killed (force)")
                     except:
                         pass
                 finally:
@@ -313,14 +321,14 @@ class Plugin(BasePlugin):
             # Terminate metadata worker process
             if self.metadata_process:
                 try:
-                    self.log("[Hydra+] Terminating metadata worker process...")
+                    self.log("Terminating metadata worker process...")
                     self.metadata_process.terminate()
                     self.metadata_process.wait(timeout=3)
-                    self.log("[Hydra+] ✓ Metadata worker terminated")
+                    self.log("Metadata worker terminated")
                 except:
                     try:
                         self.metadata_process.kill()
-                        self.log("[Hydra+] ✓ Metadata worker killed (force)")
+                        self.log("Metadata worker killed (force)")
                     except:
                         pass
                 finally:
@@ -338,7 +346,7 @@ class Plugin(BasePlugin):
                 except:
                     pass
         except Exception as e:
-            self.log(f"[Hydra+] Cleanup error (non-fatal): {e}")
+            self.log(f" Cleanup error (non-fatal): {e}")
 
     def _verify_server_startup(self):
         """Background task to verify server started successfully."""
@@ -346,11 +354,11 @@ class Plugin(BasePlugin):
         for attempt in range(max_attempts):
             time.sleep(1)
             if self._is_server_running():
-                self.log(f"[Hydra+] ✓ BRIDGE CONNECTED → Port 3847 (took {attempt + 1}s)")
+                self.log(f"▓▓▓▓▓▓▓▓▓▓▓▓▓▓ SERVER ONLINE ▓▓▓▓▓▓▓▓▓▓▓▓▓▓")
                 return
 
-        self.log("[Hydra+] ⚠ Bridge server did not respond after 10s")
-        self.log("[Hydra+] The server process was started but may not be ready yet")
+        self.log("▒▒ Server timeout - may still be starting...")
+        self.log("░░ Check debug console if issues persist")
 
     def _check_and_start_server(self):
         """
@@ -359,16 +367,17 @@ class Plugin(BasePlugin):
         """
         try:
             if self._is_server_running():
-                self.log("[Hydra+] ✓ Bridge server already running")
+                self.log("▓▓▓▓▓▓▓▓▓▓▓▓▓▓ SERVER ONLINE ▓▓▓▓▓▓▓▓▓▓▓▓▓▓")
             else:
-                self.log("[Hydra+] ⚠ BRIDGE OFFLINE → Auto-start attempt...")
+                self.log("░░ SERVER OFFLINE ____ Auto-start attempt...")
                 if self._start_server():
-                    self.log("[Hydra+] ✓ Bridge server started successfully")
+                    # Verification happens in background thread
+                    pass
                 else:
-                    self.log("[Hydra+] ✗ Could not start bridge server")
-                    self.log("[Hydra+] Please start it manually: node bridge-server.js")
+                    self.log("Could not start servers")
+                    self.log("Please check Node.js installation")
         except Exception as e:
-            self.log(f"[Hydra+] Error checking/starting server: {e}")
+            self.log(f" Error checking/starting server: {e}")
 
     def loaded_notification(self):
         """Called when the plugin is loaded and enabled."""
@@ -383,14 +392,13 @@ class Plugin(BasePlugin):
         self.log("═══════════════════════════════════════════════════════════")
         self.log("  >> /////////////////////  Hydra+ /////////////////////  <<")
         self.log("═══════════════════════════════════════════════════════════")
-        self.log(f"  [BRIDGE]    → {bridge_url}")
-        self.log(f"  [POLLING]   → Every {poll_interval}s")
+        self.log(f"  [SERVER]    → {bridge_url}")
         self.log("═══════════════════════════════════════════════════════════")
-        self.log("  🐍 Multi-headed beast awakened!")
+        self.log("  Multi-headed beast awakened!")
         self.log("═══════════════════════════════════════════════════════════")
         self.log(f"  v{__version__}")
         self.log("═══════════════════════════════════════════════════════════")
-        self.log("[Hydra+] Waiting for Nicotine+ to connect to the network...")
+        self.log("░░ HYDRA INITIALIZED")
 
         # Subscribe to search result events for auto-download
         events.connect("file-search-response", self._on_file_search_response)
@@ -412,7 +420,7 @@ class Plugin(BasePlugin):
 
     def unloaded_notification(self):
         """Called when the plugin is disabled or unloaded."""
-        self.log("[Hydra+] Plugin unloading...")
+        self.log("Plugin unloading...")
 
         # Stop polling thread
         self.running = False
@@ -427,14 +435,14 @@ class Plugin(BasePlugin):
         # Stop server if we started it
         if self.server_process:
             try:
-                self.log("[Hydra+] Stopping bridge server...")
+                self.log("Stopping servers...")
                 self.server_process.terminate()
                 self.server_process.wait(timeout=5)
-                self.log("[Hydra+] Bridge server stopped")
+                self.log("Servers stopped")
             except Exception as e:
-                self.log(f"[Hydra+] Error stopping server: {e}")
+                self.log(f" Error stopping server: {e}")
 
-        self.log("[Hydra+] Plugin unloaded")
+        self.log("Plugin unloaded")
 
     def _get_pending_searches(self):
         """Fetch pending searches from the bridge server."""
@@ -447,14 +455,14 @@ class Plugin(BasePlugin):
         except URLError as e:
             # Only log error occasionally to avoid spam
             if not hasattr(self, '_last_error_time') or time.time() - self._last_error_time > 60:
-                self.log(f"[Hydra+] Cannot reach bridge server: {e}")
+                self.log(f" Cannot reach bridge server: {e}")
                 self._last_error_time = time.time()
             return []
         except Exception as e:
             # Suppress timeout errors from logging since they're normal during metadata processing
             error_msg = str(e)
             if 'timed out' not in error_msg:
-                self.log(f"[Hydra+] Error fetching searches: {e}")
+                self.log(f" Error fetching searches: {e}")
             return []
 
     def _mark_processed(self, timestamp):
@@ -471,7 +479,7 @@ class Plugin(BasePlugin):
             # Suppress timeout errors from logging
             error_msg = str(e)
             if 'timed out' not in error_msg:
-                self.log(f"[Hydra+] Error marking processed: {e}")
+                self.log(f" Error marking processed: {e}")
             return False
 
     def _cleanup_old_data(self):
@@ -494,7 +502,7 @@ class Plugin(BasePlugin):
                 del self.processed_timestamps[ts]
 
             if old_timestamps:
-                self.log(f"[Hydra+] Cleaned {len(old_timestamps)} old processed timestamps")
+                self.log(f" Cleaned {len(old_timestamps)} old processed timestamps")
 
             # Clean up stale active searches (older than 10 minutes)
             ten_minutes_ago = current_time - 600
@@ -505,7 +513,7 @@ class Plugin(BasePlugin):
                 del self.active_searches[token]
 
             if stale_searches:
-                self.log(f"[Hydra+] Cleaned {len(stale_searches)} stale active searches")
+                self.log(f" Cleaned {len(stale_searches)} stale active searches")
 
             # IMPROVED: Clean up expired metadata cache entries
             cache_cutoff = current_time - self.metadata_cache_max_age
@@ -516,7 +524,7 @@ class Plugin(BasePlugin):
                 del self.metadata_cache[key]
 
             if expired_cache:
-                self.log(f"[Hydra+] Cleaned {len(expired_cache)} expired metadata cache entries")
+                self.log(f" Cleaned {len(expired_cache)} expired metadata cache entries")
 
             # IMPROVED: Enforce cache size limit (LRU eviction)
             if len(self.metadata_cache) > self.metadata_cache_max_size:
@@ -527,10 +535,10 @@ class Plugin(BasePlugin):
                 # Keep only max_size entries
                 self.metadata_cache = dict(sorted_cache[:self.metadata_cache_max_size])
                 removed = len(sorted_cache) - self.metadata_cache_max_size
-                self.log(f"[Hydra+] Evicted {removed} old metadata cache entries (LRU)")
+                self.log(f" Evicted {removed} old metadata cache entries (LRU)")
 
         except Exception as e:
-            self.log(f"[Hydra+] Error in cleanup: {e}")
+            self.log(f" Error in cleanup: {e}")
 
     def _trigger_search(self, query, artist='', track='', album='', track_id='', duration=0, auto_download=False, metadata_override=True, search_type='track', format_preference='mp3'):
         """
@@ -548,9 +556,15 @@ class Plugin(BasePlugin):
             search_type: 'track' or 'album' - determines search behavior
             format_preference: Preferred audio format ('mp3' or 'flac')
         """
-        auto_dl_status = "Auto Download enabled" if auto_download else "Auto Download disabled"
+        # Format search started message
+        if artist and track:
+            track_display = f"{artist} - {track}"
+        else:
+            track_display = query
+
+        auto_dl_status = "AUTO DOWNLOAD" if auto_download else "Manual"
         format_status = f"Format: {format_preference.upper()}"
-        self.log(f"[Hydra+] >> NEW SEARCH << {query} ({auto_dl_status}, {format_status})")
+        self.log(f"░░░░░ HEAD1 HUNTING ____ Search Started: {track_display} ( {auto_dl_status} {format_status} )")
 
         # Send event to bridge for popup console
         if artist and track:
@@ -576,7 +590,7 @@ class Plugin(BasePlugin):
 
             # Only log if auto-download failed to get token
             if auto_download and not search_token:
-                self.log(f"[Hydra+] ⚠ Search '{query}' - auto-download unavailable (no token)")
+                self.log(f" Search '{query}' - auto-download unavailable (no token)")
 
             # Track this search if auto-download is enabled
             if auto_download and search_token:
@@ -600,14 +614,14 @@ class Plugin(BasePlugin):
                     'last_download_user': None,  # Username of last download attempt (for abort)
                     'result_count': 0
                 }
-                self.log(f"[Hydra+: DL] ✓ Tracking search (token={search_token})")
+                self.debug_log(f"[DL] Tracking search (token={search_token})")
 
             return True
         except Exception as e:
-            self.log(f"[Hydra+] ✗ ERROR triggering search!")
-            self.log(f"[Hydra+] Exception: {type(e).__name__}: {str(e)}")
+            self.log(f"ERROR triggering search!")
+            self.log(f" Exception: {type(e).__name__}: {str(e)}")
             import traceback
-            self.log(f"[Hydra+] Traceback: {traceback.format_exc()}")
+            self.log(f" Traceback: {traceback.format_exc()}")
             return False
 
     def _send_event_to_bridge(self, event_type, message, track_id=None):
@@ -684,7 +698,7 @@ class Plugin(BasePlugin):
                 self._progress_error_count = 0
             self._progress_error_count += 1
             if self._progress_error_count % 10 == 1:
-                self.log(f"[Hydra+: PROGRESS] ⚠ Bridge connection error: {str(e)[:50]}")
+                self.log(f"[PROGRESS] Bridge connection error: {str(e)[:50]}")
 
     def _remove_progress_tracking(self, track_id):
         """Remove download from bridge server's progress tracking when download is deleted."""
@@ -712,7 +726,7 @@ class Plugin(BasePlugin):
         """Background thread to monitor active download progress and send updates to bridge."""
         import os
 
-        self.log("[Hydra+: PROGRESS] Progress monitoring thread started")
+        self.debug_log("[PROGRESS] Progress monitoring thread started")
 
         # Track which downloads we're monitoring (virtual_path -> track_id)
         monitored_downloads = {}
@@ -743,12 +757,12 @@ class Plugin(BasePlugin):
                         # DON'T notify bridge to remove - let completion handler send 100% update
                         # The bridge will auto-cleanup after 60 seconds
                         # self._remove_progress_tracking(track_id)
-                        self.log(f"[Hydra+: PROGRESS] Download finished from monitoring: trackId={track_id}")
+                        self.debug_log(f"[PROGRESS] Download finished from monitoring: trackId={track_id}")
 
                 # DEBUG: Log monitoring cycle (disabled to reduce spam)
                 # if len(transfers) > 0:
                 #     active_count = sum(1 for vp in transfers.keys() if vp in self.active_downloads)
-                #     self.log(f"[Hydra+: PROGRESS] Monitoring {len(transfers)} transfers ({active_count} tracked)")
+                #     self.log(f"[PROGRESS] Monitoring {len(transfers)} transfers ({active_count} tracked)")
 
                 for virtual_path, transfer in transfers.items():
                     try:
@@ -853,10 +867,10 @@ class Plugin(BasePlugin):
                             if int(progress) % 10 == 0 or progress == 100:
                                 current_track = search_info.get('current_track_index', 0) + 1
                                 total_tracks = len(search_info.get('tracks_to_download', []))
-                                self.log(f"[Hydra+: ALBUM-PROGRESS] {filename}: {int(progress)}% (Track {current_track}/{total_tracks})")
+                                self.debug_log(f"[PROGRESS] {filename}: {int(progress)}% (Track {current_track}/{total_tracks})")
                         else:
                             # Log all progress for single tracks
-                            self.log(f"[Hydra+: PROGRESS] {filename[:40]}: {int(progress)}% (ID: {track_id})")
+                            self.debug_log(f"[PROGRESS] {filename[:40]}: {int(progress)}% (ID: {track_id})")
 
                     except Exception as e:
                         # Skip this transfer if there's an error
@@ -1079,15 +1093,15 @@ class Plugin(BasePlugin):
                 self._process_track_search_results(token, search_info, username, file_list)
 
         except Exception as e:
-            self.log(f"[Hydra+: DL] Error processing search response: {e}")
+            self.debug_log(f"[DL] Error processing search response: {e}")
             import traceback
-            self.log(f"[Hydra+: DL] Traceback: {traceback.format_exc()}")
+            self.debug_log(f"[DL] Traceback: {traceback.format_exc()}")
 
     def _process_track_search_results(self, token, search_info, username, file_list):
         """Process search results for a single track."""
         # Log when we receive results (first time only)
         if search_info['result_count'] == 0:
-            self.log(f"[Hydra+: DL] 📥 Receiving results for '{search_info['query']}'")
+            self.debug_log(f"[DL] Receiving results for '{search_info['query']}'")
 
             # Send event to bridge for popup console
             track_id_safe = search_info.get('track_id', '') or f"{search_info.get('artist', '')}-{search_info.get('track', '')}".replace(' ', '')[:20]
@@ -1147,11 +1161,13 @@ class Plugin(BasePlugin):
                 if file_format.lower() != search_info.get('format_preference', 'mp3').lower():
                     format_info += " (fallback)"
 
-                self.log(f"[Hydra+: DL] ★ BEST MATCH → {file_name}{bitrate_info}{format_info} (score: {int(score)})")
+                # Determine HEAD number based on current candidate position
+                head_num = len(candidates)
+                self.log(f"░░░░░▒▒▒ HEAD{head_num} SPOTTED ____ Score {int(score)} → {file_name}{bitrate_info}{format_info}")
 
                 # Send event to bridge for popup console
                 track_id_safe = search_info.get('track_id', '') or f"{search_info.get('artist', '')}-{search_info.get('track', '')}".replace(' ', '')[:20]
-                self._send_event_to_bridge('info', f"Best match: {file_name}{bitrate_info}{format_info} (score: {int(score)})", track_id_safe)
+                self._send_event_to_bridge('info', f"Head spotted: {file_name}{bitrate_info}{format_info} (score: {int(score)})", track_id_safe)
 
         # Increment result count
         search_info['result_count'] += len(file_list)
@@ -1162,10 +1178,10 @@ class Plugin(BasePlugin):
 
         # Log when we receive results (first time only)
         if search_info['result_count'] == 0:
-            self.log(f"[Hydra+: ALBUM] 📥 Receiving folder results for '{search_info['query']}'")
+            self.log(f"[ALBUM] Hunting for folders...")
 
         # Debug: Always log that we received results
-        self.log(f"[Hydra+: ALBUM] Received {len(file_list)} results from {username}")
+        self.debug_log(f"[ALBUM] Received {len(file_list)} results from {username}")
 
         # Extract upload speed from message if available
         upload_speed = 0
@@ -1196,7 +1212,7 @@ class Plugin(BasePlugin):
             })
 
         # Debug: Log how many folders we found
-        self.log(f"[Hydra+: ALBUM] Found {len(folders)} folders from {username} with {len(file_list)} files")
+        self.debug_log(f"[ALBUM] Found {len(folders)} folders from {username} with {len(file_list)} files")
 
         # Score each folder based on completeness and quality
         expected_track_count = len(search_info['tracks'])
@@ -1205,7 +1221,7 @@ class Plugin(BasePlugin):
             score = self._score_album_folder(folder_path, files, search_info, upload_speed)
 
             # Debug: Log all folder scores
-            self.log(f"[Hydra+: ALBUM] Folder score: {int(score)} - {folder_path} ({len(files)} files)")
+            self.debug_log(f"[ALBUM] Folder score: {int(score)} - {folder_path} ({len(files)} files)")
 
             # Only consider folders with reasonable scores
             if score < 50:
@@ -1238,10 +1254,11 @@ class Plugin(BasePlugin):
         search_info['folder_candidates'].sort(key=lambda x: x['score'], reverse=True)
         search_info['folder_candidates'] = search_info['folder_candidates'][:5]
 
-        # Log best folder if we have a good candidate
+        # Log best folder summary when we get first results
         if search_info['folder_candidates'] and search_info['result_count'] == 0:
             best = search_info['folder_candidates'][0]
-            self.log(f"[Hydra+: ALBUM] ★ Best folder: {best['folder_path']} (score: {int(best['score'])}, {len(best['tracks_found'])} files)")
+            folder_name = best['folder_path'].split('/')[-1] if '/' in best['folder_path'] else best['folder_path']
+            self.log(f"░░░░░▒▒▒ HEAD1 SPOTTED ____ Score {int(best['score'])} → {folder_name} ({len(best['tracks_found'])} tracks)")
 
         # Increment result count
         search_info['result_count'] += len(file_list)
@@ -1355,7 +1372,7 @@ class Plugin(BasePlugin):
             candidates = search_info['download_candidates']
 
             if attempt_index >= len(candidates):
-                self.log(f"[Hydra+: DL] ✗ All {len(candidates)} candidates exhausted for '{search_info['query']}'")
+                self.log(f"[DL] All {len(candidates)} candidates exhausted for '{search_info['query']}'")
                 # Clean up - no more candidates
                 if token in self.active_searches:
                     del self.active_searches[token]
@@ -1363,14 +1380,21 @@ class Plugin(BasePlugin):
 
             candidate = candidates[attempt_index]
 
-            self.log(f"[Hydra+: DL] ⬇ HEAD #{attempt_index + 1} → {candidate['file']} (score: {int(candidate['score'])})")
+            # Format artist - track display
+            artist = search_info.get('artist', '')
+            track = search_info.get('track', '')
+            track_display = f"{artist} - {track}"
+            head_num = attempt_index + 1
+            score = int(candidate['score'])
+
+            self.log(f"░░░░░▒▒▒▒▒ HEAD{head_num} FIRST BITE ____ Download Started: {track_display} ({score})")
 
             # Send event to bridge for popup console
-            track_id_safe = search_info.get('track_id', '') or f"{search_info.get('artist', '')}-{search_info.get('track', '')}".replace(' ', '')[:20]
+            track_id_safe = search_info.get('track_id', '') or f"{artist}-{track}".replace(' ', '')[:20]
             format_info = self._get_file_format(candidate['file']).upper()
             bitrate_info = self._extract_bitrate(candidate['file']) or ''
             quality_str = f"{format_info} {bitrate_info}".strip()
-            self._send_event_to_bridge('info', f"Downloading: {search_info.get('artist', '')} - {search_info.get('track', '')} ({quality_str})", track_id_safe)
+            self._send_event_to_bridge('info', f"Downloading: {track_display} ({quality_str})", track_id_safe)
 
             # Queue the download
             self.core.downloads.enqueue_download(
@@ -1385,23 +1409,25 @@ class Plugin(BasePlugin):
             search_info['download_started_at'] = time.time()
             search_info['last_download_path'] = candidate['file']
             search_info['last_download_user'] = candidate['user']  # Store username for abort
+            search_info['head_number'] = attempt_index + 1  # Store HEAD number (1-indexed)
+            search_info['head_score'] = int(candidate['score'])  # Store score for logging
 
             # Track this download for monitoring
             # CRITICAL: Use the same key format as Nicotine+ transfers dictionary: username + virtual_path
             transfer_key = candidate['user'] + candidate['file']
             self.active_downloads[transfer_key] = token
-            self.log(f"[Hydra+: PROGRESS] ✓ Tracking download: {transfer_key[:80]} (token={token})")
+            self.debug_log(f"[PROGRESS] Tracking download: {transfer_key[:80]} (token={token})")
 
             # Don't log success - the download starting message is enough
 
         except Exception as e:
-            self.log(f"[Hydra+: DL] ✗ Error queuing download: {e}")
+            self.debug_log(f"[DL] Error queuing download: {e}")
             import traceback
-            self.log(f"[Hydra+: DL] Traceback: {traceback.format_exc()}")
+            self.debug_log(f"[DL] Traceback: {traceback.format_exc()}")
 
             # Try next candidate if available
             if attempt_index + 1 < len(search_info['download_candidates']):
-                self.log(f"[Hydra+: DL] 🐍 HEAD #{attempt_index + 1} FAILED → Trying next head...")
+                self.log(f"[DL] HEAD #{attempt_index + 1} FAILED → Trying next head...")
                 self._try_download_candidate(token, search_info, attempt_index + 1, "Fallback after error")
             else:
                 # No more candidates
@@ -1419,8 +1445,8 @@ class Plugin(BasePlugin):
         """
         next_attempt = search_info['current_attempt'] + 1
 
-        self.log(f"[Hydra+: DL] 🔄 Attempting fallback (reason: {reason})")
-        self.log(f"[Hydra+: DL] Last download path: {search_info.get('last_download_path', 'NONE')}")
+        self.log(f"[DL] 🔄 Attempting fallback (reason: {reason})")
+        self.log(f"[DL] Last download path: {search_info.get('last_download_path', 'NONE')}")
 
         # Send event to bridge for popup console
         track_id_safe = search_info.get('track_id', '') or f"{search_info.get('artist', '')}-{search_info.get('track', '')}".replace(' ', '')[:20]
@@ -1430,19 +1456,19 @@ class Plugin(BasePlugin):
         if search_info.get('last_download_path') and search_info['last_download_path'] in self.active_downloads:
             virtual_path = search_info['last_download_path']
             username = search_info.get('last_download_user')
-            self.log(f"[Hydra+: DL] Attempting to abort: {virtual_path}")
-            self.log(f"[Hydra+: DL] Username: {username}")
+            self.log(f"[DL] Attempting to abort: {virtual_path}")
+            self.log(f"[DL] Username: {username}")
 
             # Find the transfer object and try to abort it
             transfer_to_abort = None
             if hasattr(self.core, 'downloads') and hasattr(self.core.downloads, 'transfers'):
                 transfer_count = len(self.core.downloads.transfers)
-                self.log(f"[Hydra+: DL] Checking {transfer_count} transfers...")
+                self.log(f"[DL] Checking {transfer_count} transfers...")
 
                 for transfer in self.core.downloads.transfers.values():
                     if hasattr(transfer, 'virtual_path') and transfer.virtual_path == virtual_path:
                         transfer_to_abort = transfer
-                        self.log(f"[Hydra+: DL] Found transfer in queue")
+                        self.log(f"[DL] Found transfer in queue")
                         break
 
                 if transfer_to_abort:
@@ -1451,54 +1477,54 @@ class Plugin(BasePlugin):
                     cleared = False
                     if hasattr(self.core.downloads, 'clear_downloads'):
                         try:
-                            self.log(f"[Hydra+: DL] Calling clear_downloads to remove from UI...")
+                            self.log(f"[DL] Calling clear_downloads to remove from UI...")
                             self.core.downloads.clear_downloads([transfer_to_abort])
-                            self.log(f"[Hydra+: DL] ✓ Called clear_downloads successfully")
+                            self.log(f"[DL] Called clear_downloads successfully")
                             cleared = True
                         except Exception as e:
-                            self.log(f"[Hydra+: DL] ✗ clear_downloads failed: {e}")
+                            self.log(f"[DL] clear_downloads failed: {e}")
                             import traceback
-                            self.log(f"[Hydra+: DL] {traceback.format_exc()}")
+                            self.log(f"[DL] {traceback.format_exc()}")
 
                     # Only try abort if clear failed or isn't available
                     if not cleared:
                         if hasattr(self.core.downloads, 'abort_downloads'):
                             try:
-                                self.log(f"[Hydra+: DL] Calling abort_downloads with Transfer object...")
+                                self.log(f"[DL] Calling abort_downloads with Transfer object...")
                                 self.core.downloads.abort_downloads([transfer_to_abort])
-                                self.log(f"[Hydra+: DL] ✓ Called abort_downloads successfully")
+                                self.log(f"[DL] Called abort_downloads successfully")
                             except Exception as e:
-                                self.log(f"[Hydra+: DL] ✗ abort_downloads failed: {e}")
+                                self.log(f"[DL] abort_downloads failed: {e}")
                                 # Try abort_transfer as last resort
                                 if hasattr(self.core.downloads, 'abort_transfer'):
                                     try:
-                                        self.log(f"[Hydra+: DL] Trying abort_transfer instead...")
+                                        self.log(f"[DL] Trying abort_transfer instead...")
                                         self.core.downloads.abort_transfer(transfer_to_abort)
-                                        self.log(f"[Hydra+: DL] ✓ Called abort_transfer successfully")
+                                        self.log(f"[DL] Called abort_transfer successfully")
                                     except Exception as e2:
-                                        self.log(f"[Hydra+: DL] ✗ abort_transfer also failed: {e2}")
+                                        self.log(f"[DL] abort_transfer also failed: {e2}")
                         elif hasattr(self.core.downloads, 'abort_transfer'):
                             try:
-                                self.log(f"[Hydra+: DL] Calling abort_transfer...")
+                                self.log(f"[DL] Calling abort_transfer...")
                                 self.core.downloads.abort_transfer(transfer_to_abort)
-                                self.log(f"[Hydra+: DL] ✓ Called abort_transfer successfully")
+                                self.log(f"[DL] Called abort_transfer successfully")
                             except Exception as e:
-                                self.log(f"[Hydra+: DL] ✗ abort_transfer failed: {e}")
+                                self.log(f"[DL] abort_transfer failed: {e}")
 
                     # List available methods for debugging (only on first abort attempt)
                     if not hasattr(self, '_abort_methods_logged'):
                         methods = [m for m in dir(self.core.downloads) if not m.startswith('_') and ('abort' in m.lower() or 'clear' in m.lower() or 'remove' in m.lower() or 'cancel' in m.lower())]
                         if methods:
-                            self.log(f"[Hydra+: DL] Available abort/clear/remove methods: {', '.join(methods)}")
+                            self.log(f"[DL] Available abort/clear/remove methods: {', '.join(methods)}")
                         self._abort_methods_logged = True
                 else:
-                    self.log(f"[Hydra+: DL] Transfer not found in transfers dict (may have been removed)")
+                    self.log(f"[DL] Transfer not found in transfers dict (may have been removed)")
             else:
-                self.log(f"[Hydra+: DL] ✗ downloads.transfers not available")
+                self.log(f"[DL] downloads.transfers not available")
 
             # Remove from tracking
             del self.active_downloads[virtual_path]
-            self.log(f"[Hydra+: DL] Removed from tracking dict")
+            self.log(f"[DL] Removed from tracking dict")
 
         # Try next candidate (logging happens in _try_download_candidate)
         self._try_download_candidate(token, search_info, next_attempt, f"Trying next candidate")
@@ -1522,9 +1548,9 @@ class Plugin(BasePlugin):
                     self._check_track_download_ready(token, search_info, current_time)
 
             except Exception as e:
-                self.log(f"[Hydra+: DL] Error checking search {token}: {e}")
+                self.debug_log(f"[DL] Error checking search {token}: {e}")
                 import traceback
-                self.log(f"[Hydra+: DL] Traceback: {traceback.format_exc()}")
+                self.debug_log(f"[DL] Traceback: {traceback.format_exc()}")
 
                 # Remove problematic search after timeout
                 if current_time - search_info['timestamp'] > 60:
@@ -1554,7 +1580,7 @@ class Plugin(BasePlugin):
                 self._try_download_candidate(token, search_info, 0, "Timeout - downloading best available")
             else:
                 best_score = candidates[0]['score'] if candidates else 0
-                self.log(f"[Hydra+: DL] ✗ NO MATCH → '{search_info['query']}' (best score: {best_score}/50)")
+                self.log(f"[DL] NO MATCH → '{search_info['query']}' (best score: {best_score}/50)")
                 # Remove from tracking - no good candidates
                 del self.active_searches[token]
 
@@ -1583,15 +1609,17 @@ class Plugin(BasePlugin):
                 self._start_album_download(token, search_info, folder_candidates[0])
             else:
                 best_score = folder_candidates[0]['score'] if folder_candidates else 0
-                self.log(f"[Hydra+: ALBUM] ✗ No suitable folder found for '{search_info['album_name']}' (best score: {best_score}/100)")
+                self.log(f"[ALBUM] No suitable folder found for '{search_info['album_name']}' (best score: {best_score}/100)")
                 # Remove from tracking
                 del self.active_searches[token]
 
     def _start_album_download(self, token, search_info, best_folder):
         """Start downloading tracks from the best album folder."""
         try:
-            self.log(f"[Hydra+: ALBUM] ⬇ Selected folder: {best_folder['folder_path']}")
-            self.log(f"[Hydra+: ALBUM] ⬇ From user: {best_folder['user']} (score: {int(best_folder['score'])})")
+            folder_name = best_folder['folder_path'].split('/')[-1] if '/' in best_folder['folder_path'] else best_folder['folder_path']
+            self.log(f"░░░░░▒▒▒▒▒ HEAD1 FIRST BITE ____ Album Download Started: {folder_name}")
+            self.debug_log(f"[ALBUM] Selected folder: {best_folder['folder_path']}")
+            self.debug_log(f"[ALBUM] From user: {best_folder['user']} (score: {int(best_folder['score'])})")
 
             # Store best folder info
             search_info['best_folder'] = best_folder
@@ -1600,20 +1628,20 @@ class Plugin(BasePlugin):
             tracks_to_download = self._match_album_tracks(search_info, best_folder)
 
             if not tracks_to_download:
-                self.log(f"[Hydra+: ALBUM] ✗ Could not match any tracks in folder")
+                self.log(f"[ALBUM] Could not match any tracks in folder")
                 del self.active_searches[token]
                 return
 
             search_info['tracks_to_download'] = tracks_to_download
             search_info['current_track_index'] = 0
 
-            self.log(f"[Hydra+: ALBUM] ✓ Matched {len(tracks_to_download)}/{len(search_info['tracks'])} tracks")
+            self.debug_log(f"[ALBUM] Matched {len(tracks_to_download)}/{len(search_info['tracks'])} tracks")
 
             # CHANGE: Don't create album folder yet - we'll create it after first track downloads
             # This way we can extract the download directory from the actual download path
             search_info['album_folder_created'] = False
 
-            self.log(f"[Hydra+: ALBUM] Starting track 1/{len(tracks_to_download)}...")
+            self.debug_log(f"[ALBUM] Starting track 1/{len(tracks_to_download)}...")
 
             # ALBUM-LEVEL PREFETCH: Fetch album metadata ONCE (year, cover art)
             # This is shared across all tracks and should not be fetched per-track
@@ -1625,9 +1653,9 @@ class Plugin(BasePlugin):
             self._download_next_album_track(token, search_info)
 
         except Exception as e:
-            self.log(f"[Hydra+: ALBUM] Error starting album download: {e}")
+            self.debug_log(f"[ALBUM] Error starting album download: {e}")
             import traceback
-            self.log(f"[Hydra+: ALBUM] Traceback: {traceback.format_exc()}")
+            self.debug_log(f"[ALBUM] Traceback: {traceback.format_exc()}")
             del self.active_searches[token]
 
     def _get_download_directory(self, track_to_download):
@@ -1642,30 +1670,30 @@ class Plugin(BasePlugin):
                 if hasattr(config, 'sections') and hasattr(config.sections, 'transfers'):
                     download_dir = config.sections.get('transfers', {}).get('downloaddir')
                     if download_dir:
-                        self.log(f"[Hydra+: ALBUM] ✓ Found download directory (config.sections): {download_dir}")
+                        self.debug_log(f"[ALBUM] Found download directory (config.sections): {download_dir}")
                         return download_dir
 
                 # Try legacy config format
                 if hasattr(config, 'data') and 'transfers' in config.data:
                     download_dir = config.data['transfers'].get('downloaddir')
                     if download_dir:
-                        self.log(f"[Hydra+: ALBUM] ✓ Found download directory (config.data): {download_dir}")
+                        self.debug_log(f"[ALBUM] Found download directory (config.data): {download_dir}")
                         return download_dir
 
             # Method 2: Check core.downloads
             if hasattr(self.core, 'downloads') and hasattr(self.core.downloads, 'download_folder'):
                 download_dir = self.core.downloads.download_folder
                 if download_dir:
-                    self.log(f"[Hydra+: ALBUM] ✓ Found download directory (core.downloads): {download_dir}")
+                    self.debug_log(f"[ALBUM] Found download directory (core.downloads): {download_dir}")
                     return download_dir
 
-            self.log(f"[Hydra+: ALBUM] ⚠ Could not find download directory in config")
+            self.debug_log(f"[ALBUM] Could not find download directory in config")
             return None
 
         except Exception as e:
-            self.log(f"[Hydra+: ALBUM] Error getting download directory: {e}")
+            self.debug_log(f"[ALBUM] Error getting download directory: {e}")
             import traceback
-            self.log(f"[Hydra+: ALBUM] Traceback: {traceback.format_exc()}")
+            self.debug_log(f"[ALBUM] Traceback: {traceback.format_exc()}")
             return None
 
     def _ensure_album_folder(self, search_info, download_dir):
@@ -1680,10 +1708,10 @@ class Plugin(BasePlugin):
             year = search_info.get('year', '')
 
             if not album_artist or not album_name:
-                self.log(f"[Hydra+: ALBUM] Missing album_artist or album_name")
+                self.log(f"[ALBUM] Missing album_artist or album_name")
                 return None
 
-            self.log(f"[Hydra+: ALBUM] Creating album folder: {album_artist} - {album_name}")
+            self.debug_log(f"[ALBUM] Creating album folder: {album_artist} - {album_name}")
 
             # Send request to bridge server to create folder
             payload = {
@@ -1703,20 +1731,20 @@ class Plugin(BasePlugin):
 
                 if result.get('success'):
                     folder_path = result.get('folder_path', '')
-                    self.log(f"[Hydra+: ALBUM] ✓ Folder created: {result.get('folder_name', '')}")
+                    self.log(f"[ALBUM] Folder created: {result.get('folder_name', '')}")
                     return folder_path
                 else:
                     error = result.get('error', 'Unknown error')
-                    self.log(f"[Hydra+: ALBUM] ✗ Failed to create folder: {error}")
+                    self.log(f"[ALBUM] Failed to create folder: {error}")
                     return None
 
         except URLError as e:
-            self.log(f"[Hydra+: ALBUM] ✗ Cannot reach bridge server: {e}")
+            self.log(f"[ALBUM] Cannot reach bridge server: {e}")
             return None
         except Exception as e:
-            self.log(f"[Hydra+: ALBUM] Error creating album folder: {e}")
+            self.debug_log(f"[ALBUM] Error creating album folder: {e}")
             import traceback
-            self.log(f"[Hydra+: ALBUM] Traceback: {traceback.format_exc()}")
+            self.debug_log(f"[ALBUM] Traceback: {traceback.format_exc()}")
             return None
 
     def _match_album_tracks(self, search_info, best_folder):
@@ -1879,11 +1907,11 @@ class Plugin(BasePlugin):
 
                 track_id = first_track_info.get('track_id', '')
                 if not track_id:
-                    self.log(f"[Hydra+: PREFETCH-ALBUM] ⚠ No track_id, skipping album metadata prefetch")
+                    self.debug_log(f"[PREFETCH] No track_id, skipping album metadata prefetch")
                     return
 
                 album_name = first_track_info.get('album', 'Unknown Album')
-                self.log(f"[Hydra+: PREFETCH-ALBUM] Fetching album metadata for: {album_name}")
+                self.debug_log(f"[PREFETCH] Fetching album metadata for: {album_name}")
 
                 # Fetch album metadata from Spotify page (year, cover URL)
                 track_url = f"https://open.spotify.com/track/{track_id}"
@@ -1916,17 +1944,17 @@ class Plugin(BasePlugin):
                             'timestamp': time.time()
                         }
 
-                        self.log(f"[Hydra+: PREFETCH-ALBUM] ✓ Album metadata cached (year={album_metadata.get('year', 'N/A')})")
+                        self.debug_log(f"[PREFETCH] Album metadata cached (year={album_metadata.get('year', 'N/A')})")
 
                 except URLError as e:
-                    self.log(f"[Hydra+: PREFETCH-ALBUM] ⚠ Failed to fetch album metadata: {e}")
+                    self.debug_log(f"[PREFETCH] Failed to fetch album metadata: {e}")
                 except Exception as e:
-                    self.log(f"[Hydra+: PREFETCH-ALBUM] ⚠ Error prefetching album metadata: {e}")
+                    self.debug_log(f"[PREFETCH] Error prefetching album metadata: {e}")
 
             except Exception as e:
-                self.log(f"[Hydra+: PREFETCH-ALBUM] ✗ Fatal error in prefetch worker: {e}")
+                self.debug_log(f"[PREFETCH] Fatal error in prefetch worker: {e}")
                 import traceback
-                self.log(f"[Hydra+: PREFETCH-ALBUM] {traceback.format_exc()}")
+                self.debug_log(f"[PREFETCH] {traceback.format_exc()}")
 
         # Start prefetch in background thread
         thread = Thread(target=prefetch_worker, daemon=True)
@@ -1946,7 +1974,7 @@ class Plugin(BasePlugin):
             track_to_download = tracks_to_download[current_index]
             track_info = track_to_download['track_info']
 
-            self.log(f"[Hydra+: ALBUM] ⬇ Track {current_index + 1}/{len(tracks_to_download)}: {track_info['artist']} - {track_info['track']}")
+            self.debug_log(f"[ALBUM] Track {current_index + 1}/{len(tracks_to_download)}: {track_info['artist']} - {track_info['track']}")
 
             # IMPROVED: Generate album-level trackId for unified progress bar
             # This ensures all tracks in the album share the same progress bar
@@ -1956,7 +1984,7 @@ class Plugin(BasePlugin):
                 # Initialize album progress tracking
                 search_info['completed_track_count'] = 0
                 search_info['total_album_bytes'] = sum(t.get('file_size', 0) for t in tracks_to_download)
-                self.log(f"[Hydra+: ALBUM] Album trackId: {album_track_id}, Total size: {search_info['total_album_bytes']} bytes")
+                self.debug_log(f"[ALBUM] Album trackId: {album_track_id}, Total size: {search_info['total_album_bytes']} bytes")
 
             # Store current track info for progress calculation
             search_info['current_track_size'] = track_to_download.get('file_size', 0)
@@ -1982,9 +2010,9 @@ class Plugin(BasePlugin):
             search_info['download_started_at'] = time.time()
 
         except Exception as e:
-            self.log(f"[Hydra+: ALBUM] Error downloading track: {e}")
+            self.debug_log(f"[ALBUM] Error downloading track: {e}")
             import traceback
-            self.log(f"[Hydra+: ALBUM] Traceback: {traceback.format_exc()}")
+            self.debug_log(f"[ALBUM] Traceback: {traceback.format_exc()}")
 
             # Try next track or give up
             search_info['current_track_index'] += 1
@@ -2014,21 +2042,21 @@ class Plugin(BasePlugin):
 
             # Verify file exists and is MP3
             if not os.path.exists(file_path):
-                self.log(f"[Hydra+: META] File not found: {file_path}")
+                self.log(f"[META] File not found: {file_path}")
                 return
 
             # Check if file is MP3 or FLAC
             file_lower = file_path.lower()
             if not (file_lower.endswith('.mp3') or file_lower.endswith('.flac')):
-                self.log(f"[Hydra+: META] Unsupported format (only MP3/FLAC), skipping: {file_path}")
+                self.log(f"[META] Unsupported format (only MP3/FLAC), skipping: {file_path}")
                 return
 
             # Check if metadata override is enabled for this search
             if not search_info.get('metadata_override', True):
-                self.log(f"[Hydra+: META] Metadata override disabled for this track")
+                self.log(f"[META] Metadata override disabled for this track")
                 return
 
-            self.log(f"[Hydra+: META] Sending to Node server for processing...")
+            self.debug_log(f"[META] Sending to metadata server for processing...")
 
             # Prepare request data (using camelCase for Node.js)
             payload = {
@@ -2049,45 +2077,48 @@ class Plugin(BasePlugin):
                 result = json.loads(response.read().decode('utf-8'))
 
                 if result.get('success'):
-                    self.log(f"[Hydra+: META] ✓ Processing successful!")
+                    # Format FINISHED message
+                    artist = search_info.get('artist', '')
+                    track = search_info.get('track', '')
+                    track_display = f"{artist} - {track}"
+                    head_num = search_info.get('head_number', 1)
 
                     if result.get('renamed'):
-                        new_name = os.path.basename(result['new_path'])
-                        self.log(f"[Hydra+: META]   Renamed: {new_name}")
+                        self.log(f"▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓  HEAD{head_num} FINISHED  ____ {track_display}        ^~~~~~~<:===<")
 
                     if result.get('tags_updated'):
                         artist = search_info.get('artist', '')
                         track = search_info.get('track', '')
                         album = search_info.get('album', '')
                         if artist:
-                            self.log(f"[Hydra+: META]   Artist: {artist}")
+                            self.log(f"[META]   Artist: {artist}")
                         if track:
-                            self.log(f"[Hydra+: META]   Track: {track}")
+                            self.log(f"[META]   Track: {track}")
                         if album:
-                            self.log(f"[Hydra+: META]   Album: {album}")
+                            self.log(f"[META]   Album: {album}")
 
                         # Log additional metadata from server response
                         if result.get('year'):
-                            self.log(f"[Hydra+: META]   Year: {result['year']}")
+                            self.log(f"[META]   Year: {result['year']}")
                         if result.get('track_number'):
-                            self.log(f"[Hydra+: META]   Track: #{result['track_number']}")
+                            self.log(f"[META]   Track: #{result['track_number']}")
                         if result.get('genre'):
-                            self.log(f"[Hydra+: META]   Genre: {result['genre']}")
+                            self.log(f"[META]   Genre: {result['genre']}")
                         if result.get('label'):
-                            self.log(f"[Hydra+: META]   Label: {result['label']}")
+                            self.log(f"[META]   Label: {result['label']}")
 
                     if result.get('cover_embedded'):
-                        self.log(f"[Hydra+: META]   Cover: ✓ Embedded")
+                        self.log(f"[META]   Cover: Embedded")
                 else:
-                    self.log(f"[Hydra+: META] ✗ Failed: {result.get('error', 'Unknown error')}")
+                    self.log(f"[META] Failed: {result.get('error', 'Unknown error')}")
 
         except URLError as e:
-            self.log(f"[Hydra+: META] ✗ Cannot reach Node server: {e}")
-            self.log(f"[Hydra+: META] Make sure bridge server is running")
+            self.log(f"[META] Cannot reach Node server: {e}")
+            self.log(f"[META] Make sure bridge server is running")
         except Exception as e:
-            self.log(f"[Hydra+: META] ✗ Error: {e}")
+            self.log(f"[META] Error: {e}")
             import traceback
-            self.log(f"[Hydra+: META] {traceback.format_exc()}")
+            self.log(f"[META] {traceback.format_exc()}")
 
     def _finalize_album_download(self, token, search_info):
         """
@@ -2101,31 +2132,31 @@ class Plugin(BasePlugin):
             # Calculate how many tracks we actually downloaded
             downloaded_count = current_index  # current_index is incremented after each download
 
-            self.log(f"[Hydra+: ALBUM] ✓ Album download complete!")
-            self.log(f"[Hydra+: ALBUM] Downloaded: {downloaded_count}/{len(tracks_to_download)} tracks")
-            self.log(f"[Hydra+: ALBUM] All tracks were processed immediately (no batch processing)")
+            self.log(f"[ALBUM] Album download complete!")
+            self.log(f"[ALBUM] Downloaded: {downloaded_count}/{len(tracks_to_download)} tracks")
+            self.log(f"[ALBUM] All tracks were processed immediately (no batch processing)")
 
             # IMPROVED: Send final 100% progress update for album-level progress bar
             if 'album_track_id' in search_info:
                 album_track_id = search_info['album_track_id']
                 album_name = search_info.get('album_name', 'Album')
                 self._send_progress_update(album_track_id, album_name, 100, 0, 0)
-                self.log(f"[Hydra+: ALBUM-PROGRESS] ✓ Album progress complete at 100%")
+                self.log(f"[PROGRESS] Album progress complete at 100%")
 
             # Check if album folder was created
             album_folder = search_info.get('album_folder_path')
             if album_folder:
                 import os
-                self.log(f"[Hydra+: ALBUM] Location: {album_folder}")
-                self.log(f"[Hydra+: ALBUM] Folder: {os.path.basename(album_folder)}")
+                self.log(f"[ALBUM] Location: {album_folder}")
+                self.log(f"[ALBUM] Folder: {os.path.basename(album_folder)}")
 
             # Clean up
             del self.active_searches[token]
 
         except Exception as e:
-            self.log(f"[Hydra+: ALBUM] Error finalizing album: {e}")
+            self.debug_log(f"[ALBUM] Error finalizing album: {e}")
             import traceback
-            self.log(f"[Hydra+: ALBUM] Traceback: {traceback.format_exc()}")
+            self.debug_log(f"[ALBUM] Traceback: {traceback.format_exc()}")
             if token in self.active_searches:
                 del self.active_searches[token]
 
@@ -2140,7 +2171,7 @@ class Plugin(BasePlugin):
             # Extract file paths (already renamed if metadata processing occurred)
             track_file_paths = [track_data['file_path'] for track_data in downloaded_tracks]
 
-            self.log(f"[Hydra+: ALBUM] Creating album folder and organizing {len(track_file_paths)} files...")
+            self.log(f"[ALBUM] Creating album folder and organizing {len(track_file_paths)} files...")
 
             # Send to bridge server to create album folder and move files
             payload = {
@@ -2160,36 +2191,36 @@ class Plugin(BasePlugin):
 
                 if result.get('success'):
                     folder_path = result.get('folder_path', '')
-                    self.log(f"[Hydra+: ALBUM] ✓ Album organized: {folder_path}")
+                    self.log(f"[ALBUM] Album organized: {folder_path}")
                 else:
                     error = result.get('error', 'Unknown error')
-                    self.log(f"[Hydra+: ALBUM] ✗ Failed to organize album: {error}")
+                    self.log(f"[ALBUM] Failed to organize album: {error}")
 
         except Exception as e:
-            self.log(f"[Hydra+: ALBUM] Error organizing album folder: {e}")
+            self.debug_log(f"[ALBUM] Error organizing album folder: {e}")
             import traceback
-            self.log(f"[Hydra+: ALBUM] Traceback: {traceback.format_exc()}")
+            self.debug_log(f"[ALBUM] Traceback: {traceback.format_exc()}")
 
     def _process_album_metadata_and_organize(self, downloaded_tracks, search_info):
         """Process metadata for all tracks, then organize into album folder."""
         try:
-            self.log(f"[Hydra+: ALBUM-META] Starting batch processing...")
+            self.log(f"[ALBUM-META] Starting batch processing...")
             self._process_album_metadata_batch(downloaded_tracks, search_info)
-            self.log(f"[Hydra+: ALBUM-META] Batch processing complete, organizing folder...")
+            self.log(f"[ALBUM-META] Batch processing complete, organizing folder...")
         except Exception as e:
-            self.log(f"[Hydra+: ALBUM-META] ⚠ Error during metadata processing: {e}")
+            self.log(f"[ALBUM-META] Error during metadata processing: {e}")
             import traceback
-            self.log(f"[Hydra+: ALBUM-META] Traceback: {traceback.format_exc()}")
-            self.log(f"[Hydra+: ALBUM-META] Continuing to organize files despite errors...")
+            self.log(f"[ALBUM-META] Traceback: {traceback.format_exc()}")
+            self.log(f"[ALBUM-META] Continuing to organize files despite errors...")
 
         # CRITICAL: Always organize folder, even if metadata processing failed
         # This ensures files are moved into album folder regardless of server crashes
         try:
             self._organize_album_folder(downloaded_tracks, search_info)
         except Exception as e:
-            self.log(f"[Hydra+: ALBUM] ✗ Error organizing album folder: {e}")
+            self.debug_log(f"[ALBUM] Error organizing album folder: {e}")
             import traceback
-            self.log(f"[Hydra+: ALBUM] Traceback: {traceback.format_exc()}")
+            self.debug_log(f"[ALBUM] Traceback: {traceback.format_exc()}")
 
     def download_finished_notification(self, user, virtual_path, real_path):
         """
@@ -2225,14 +2256,20 @@ class Plugin(BasePlugin):
             import os
             filename = os.path.basename(real_path)
 
+            # Format COMPLETE message
+            artist = search_info.get('artist', '')
+            track = search_info.get('track', '')
+            track_display = f"{artist} - {track}"
+            head_num = search_info.get('head_number', 1)
+
             # Send 100% progress to show completion in progress bar
             self._send_progress_update(track_id_safe, filename, 100, 0, 0)
-            self.log(f"[Hydra+: PROGRESS] ✓ Download complete at 100%: {filename[:40]}")
+            self.log(f"░░░░░▒▒▒▒▒▓▓▓▓▓ HEAD{head_num} COMPLETE ____ {track_display}")
 
             # Remove from active tracking NOW so monitoring thread stops tracking it
             if transfer_key in self.active_downloads:
                 del self.active_downloads[transfer_key]
-                self.log(f"[Hydra+: PROGRESS] Removed from tracking: {filename[:40]}")
+                self.debug_log(f"[PROGRESS] Removed from tracking: {filename[:40]}")
 
             # Send event to bridge for popup console
             self._send_event_to_bridge('success', f"Downloaded: {filename}", track_id_safe)
@@ -2247,15 +2284,15 @@ class Plugin(BasePlugin):
                 self._handle_track_completion(token, search_info, virtual_path, real_path)
 
         except Exception as e:
-            self.log(f"[Hydra+] Error in download_finished_notification: {e}")
+            self.log(f" Error in download_finished_notification: {e}")
             import traceback
-            self.log(f"[Hydra+] Traceback: {traceback.format_exc()}")
+            self.log(f" Traceback: {traceback.format_exc()}")
 
     def _handle_track_completion(self, token, search_info, virtual_path, real_path):
         """Handle completion of a single track download."""
         # Debug: Log the paths we received
-        self.log(f"[Hydra+: META] Download complete - virtual_path: {virtual_path}")
-        self.log(f"[Hydra+: META] Download complete - real_path: {real_path}")
+        self.debug_log(f"[META] Download complete - virtual_path: {virtual_path}")
+        self.debug_log(f"[META] Download complete - real_path: {real_path}")
 
         # Send event to bridge for popup console
         import os
@@ -2290,7 +2327,7 @@ class Plugin(BasePlugin):
             current_track = tracks_to_download[current_index]
             track_info = current_track['track_info']
 
-            self.log(f"[Hydra+: ALBUM] ✓ Track {current_index + 1}/{len(tracks_to_download)} downloaded: {track_info['track']}")
+            self.log(f"[ALBUM] Track {current_index + 1}/{len(tracks_to_download)} downloaded: {track_info['track']}")
 
             # IMPROVED: Increment completed track count for cumulative progress calculation
             search_info['completed_track_count'] = search_info.get('completed_track_count', 0) + 1
@@ -2300,15 +2337,15 @@ class Plugin(BasePlugin):
             if not search_info.get('album_folder_created', False):
                 import os
                 download_dir = os.path.dirname(real_path)
-                self.log(f"[Hydra+: ALBUM] Extracted download directory from first track: {download_dir}")
+                self.log(f"[ALBUM] Extracted download directory from first track: {download_dir}")
 
                 album_folder = self._ensure_album_folder(search_info, download_dir)
                 if album_folder:
                     search_info['album_folder_path'] = album_folder
                     search_info['album_folder_created'] = True
-                    self.log(f"[Hydra+: ALBUM] ✓ Album folder created: {os.path.basename(album_folder)}")
+                    self.log(f"[ALBUM] Album folder created: {os.path.basename(album_folder)}")
                 else:
-                    self.log(f"[Hydra+: ALBUM] ⚠ Could not create album folder, continuing anyway...")
+                    self.log(f"[ALBUM] Could not create album folder, continuing anyway...")
                     search_info['album_folder_created'] = True  # Mark as attempted to avoid retries
 
             # CRITICAL CHANGE: Process metadata and move to folder IMMEDIATELY
@@ -2344,23 +2381,23 @@ class Plugin(BasePlugin):
 
             # Verify file exists
             if not os.path.exists(real_path):
-                self.log(f"[Hydra+: ALBUM] ✗ File not found: {real_path}")
+                self.log(f"[ALBUM] File not found: {real_path}")
                 return
 
             # Check if file is MP3 or FLAC
             file_lower = real_path.lower()
             if not (file_lower.endswith('.mp3') or file_lower.endswith('.flac')):
-                self.log(f"[Hydra+: ALBUM] ⚠ Unsupported format, skipping metadata: {real_path}")
+                self.log(f"[ALBUM] Unsupported format, skipping metadata: {real_path}")
                 return
 
             # Get album folder path (created after first download)
             album_folder_path = search_info.get('album_folder_path')
             if not album_folder_path:
-                self.log(f"[Hydra+: ALBUM] ⚠ No album folder path, processing without move")
+                self.log(f"[ALBUM] No album folder path, processing without move")
             else:
-                self.log(f"[Hydra+: ALBUM] Album folder: {os.path.basename(album_folder_path)}")
+                self.log(f"[ALBUM] Album folder: {os.path.basename(album_folder_path)}")
 
-            self.log(f"[Hydra+: ALBUM] Processing track {track_index + 1} metadata...")
+            self.log(f"[ALBUM] Processing track {track_index + 1} metadata...")
 
             # Process metadata with album folder as target (will rename AND move)
             success, new_path = self._process_single_track_metadata(
@@ -2373,16 +2410,16 @@ class Plugin(BasePlugin):
 
             if success:
                 if album_folder_path:
-                    self.log(f"[Hydra+: ALBUM] ✓ Track {track_index + 1} moved to album: {os.path.basename(new_path)}")
+                    self.log(f"[ALBUM] Track {track_index + 1} moved to album: {os.path.basename(new_path)}")
                 else:
-                    self.log(f"[Hydra+: ALBUM] ✓ Track {track_index + 1} complete: {os.path.basename(new_path)}")
+                    self.log(f"[ALBUM] Track {track_index + 1} complete: {os.path.basename(new_path)}")
             else:
-                self.log(f"[Hydra+: ALBUM] ✗ Track {track_index + 1} failed metadata processing")
+                self.log(f"[ALBUM] Track {track_index + 1} failed metadata processing")
 
         except Exception as e:
-            self.log(f"[Hydra+: ALBUM] ✗ Error processing track {track_index + 1} immediately: {e}")
+            self.debug_log(f"[ALBUM] Error processing track {track_index + 1} immediately: {e}")
             import traceback
-            self.log(f"[Hydra+: ALBUM] Traceback: {traceback.format_exc()}")
+            self.debug_log(f"[ALBUM] Traceback: {traceback.format_exc()}")
 
     def _process_album_metadata_batch_safe(self, downloaded_tracks, search_info):
         """
@@ -2391,9 +2428,9 @@ class Plugin(BasePlugin):
         try:
             self._process_album_metadata_batch(downloaded_tracks, search_info)
         except Exception as e:
-            self.log(f"[Hydra+: ALBUM-META] ✗ FATAL ERROR in batch processing: {e}")
+            self.log(f"[ALBUM-META] FATAL ERROR in batch processing: {e}")
             import traceback
-            self.log(f"[Hydra+: ALBUM-META] Traceback: {traceback.format_exc()}")
+            self.log(f"[ALBUM-META] Traceback: {traceback.format_exc()}")
 
     def _process_album_metadata_batch(self, downloaded_tracks, search_info):
         """
@@ -2409,19 +2446,19 @@ class Plugin(BasePlugin):
         failed = 0
         token = search_info.get('token', '')
 
-        self.log(f"[Hydra+: ALBUM-META] Starting batch of {total_tracks} tracks...")
+        self.log(f"[ALBUM-META] Starting batch of {total_tracks} tracks...")
 
         for i, track_data in enumerate(downloaded_tracks):
             try:
                 file_path = track_data['file_path']
                 track_info = track_data['track_info']
             except (KeyError, TypeError) as e:
-                self.log(f"[Hydra+: ALBUM-META] ✗ Invalid track data at index {i}: {e}")
+                self.log(f"[ALBUM-META] Invalid track data at index {i}: {e}")
                 failed += 1
                 continue
 
             try:
-                self.log(f"[Hydra+: ALBUM-META] Processing {i + 1}/{total_tracks}: {track_info.get('track', 'Unknown')}")
+                self.log(f"[ALBUM-META] Processing {i + 1}/{total_tracks}: {track_info.get('track', 'Unknown')}")
 
                 # Process this track's metadata with prefetched cache
                 success, new_path = self._process_single_track_metadata(file_path, track_info, token, i)
@@ -2430,10 +2467,10 @@ class Plugin(BasePlugin):
                     successful += 1
                     # Update the file path in downloaded_tracks with the renamed path
                     track_data['file_path'] = new_path
-                    self.log(f"[Hydra+: ALBUM-META] ✓ Track {i + 1}/{total_tracks} complete")
+                    self.log(f"[ALBUM-META] Track {i + 1}/{total_tracks} complete")
                 else:
                     failed += 1
-                    self.log(f"[Hydra+: ALBUM-META] ✗ Track {i + 1}/{total_tracks} failed")
+                    self.log(f"[ALBUM-META] Track {i + 1}/{total_tracks} failed")
 
                 # CRITICAL: Add delay between tracks to prevent server overload
                 # The server does background work (cover download, tag writing) that takes time
@@ -2442,13 +2479,13 @@ class Plugin(BasePlugin):
                     time.sleep(2)  # 2 second delay to let server finish background work
 
             except Exception as e:
-                self.log(f"[Hydra+: ALBUM-META] ✗ Exception processing track {i + 1}: {e}")
+                self.log(f"[ALBUM-META] Exception processing track {i + 1}: {e}")
                 import traceback
-                self.log(f"[Hydra+: ALBUM-META] Traceback: {traceback.format_exc()}")
+                self.log(f"[ALBUM-META] Traceback: {traceback.format_exc()}")
                 failed += 1
                 # Continue with next track even on error
 
-        self.log(f"[Hydra+: ALBUM-META] ✓ Batch complete: {successful} succeeded, {failed} failed")
+        self.log(f"[ALBUM-META] Batch complete: {successful} succeeded, {failed} failed")
 
         # Cleanup: Remove cached metadata for this album
         if token:
@@ -2456,7 +2493,7 @@ class Plugin(BasePlugin):
             for key in keys_to_remove:
                 del self.metadata_cache[key]
             if keys_to_remove:
-                self.log(f"[Hydra+: ALBUM-META] Cleaned up {len(keys_to_remove)} cached metadata entries")
+                self.log(f"[ALBUM-META] Cleaned up {len(keys_to_remove)} cached metadata entries")
 
     def _process_single_track_metadata(self, file_path, track_info, token=None, track_index=None, target_folder=None):
         """
@@ -2485,13 +2522,13 @@ class Plugin(BasePlugin):
 
             # Verify file exists and is MP3
             if not os.path.exists(file_path):
-                self.log(f"[Hydra+: ALBUM-META] ✗ File not found: {file_path}")
+                self.log(f"[ALBUM-META] File not found: {file_path}")
                 return (False, file_path)
 
             # Check if file is MP3 or FLAC
             file_lower = file_path.lower()
             if not (file_lower.endswith('.mp3') or file_lower.endswith('.flac')):
-                self.log(f"[Hydra+: ALBUM-META] ✗ Unsupported format (only MP3/FLAC), skipping: {file_path}")
+                self.log(f"[ALBUM-META] Unsupported format (only MP3/FLAC), skipping: {file_path}")
                 return (False, file_path)
 
             # IMPROVED: Check if we have prefetched ALBUM metadata in cache (with TTL check)
@@ -2504,11 +2541,11 @@ class Plugin(BasePlugin):
                     age = time.time() - cached_entry.get('timestamp', 0)
                     if age < self.metadata_cache_max_age:
                         album_metadata = cached_entry.get('data')
-                        self.log(f"[Hydra+: ALBUM-META]   Using cached album metadata (year={album_metadata.get('year', 'N/A')})")
+                        self.log(f"[ALBUM-META]   Using cached album metadata (year={album_metadata.get('year', 'N/A')})")
                     else:
                         # Expired, remove it
                         del self.metadata_cache[cache_key]
-                        self.log(f"[Hydra+: ALBUM-META]   Cached metadata expired (age={int(age)}s)")
+                        self.log(f"[ALBUM-META]   Cached metadata expired (age={int(age)}s)")
 
             # Prepare request data with track number and prefetched album metadata (using camelCase for Node.js)
             payload = {
@@ -2517,7 +2554,9 @@ class Plugin(BasePlugin):
                 'track': track_info.get('track', ''),
                 'album': track_info.get('album', ''),
                 'trackId': track_info.get('track_id', ''),  # camelCase for Node.js
-                'trackNumber': track_info.get('track_number', 0)  # camelCase for Node.js
+                'trackNumber': track_info.get('track_number', 0),  # camelCase for Node.js
+                'headNumber': track_info.get('head_number', 1),  # camelCase for Node.js
+                'headScore': track_info.get('head_score', 0)  # camelCase for Node.js
             }
 
             # Add prefetched album metadata if available (server will skip Spotify page fetch)
@@ -2542,11 +2581,15 @@ class Plugin(BasePlugin):
                 if result.get('success'):
                     new_path = result.get('new_path', file_path)
                     if result.get('renamed'):
-                        new_name = os.path.basename(new_path)
-                        self.log(f"[Hydra+: ALBUM-META]   ✓ Renamed: {new_name}")
+                        # Format FINISHED message for album tracks
+                        artist = track_info.get('artist', '')
+                        track_name = track_info.get('track', '')
+                        track_display = f"{artist} - {track_name}"
+                        head_num = track_info.get('head_number', 1)
+                        self.log(f"▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓  HEAD{head_num} FINISHED  ____ {track_display}        ^~~~~~~<:===<")
                     return (True, new_path)
                 else:
-                    self.log(f"[Hydra+: ALBUM-META]   ✗ Failed: {result.get('error', 'Unknown error')}")
+                    self.log(f"[ALBUM-META]   Failed: {result.get('error', 'Unknown error')}")
                     return (False, file_path)
 
         except URLError as e:
@@ -2564,27 +2607,27 @@ class Plugin(BasePlugin):
 
             # If timeout, check if server is still alive
             if is_timeout and not is_crash:
-                self.log(f"[Hydra+: ALBUM-META] Timeout, checking metadata worker health...")
+                self.log(f"[ALBUM-META] Timeout, checking metadata worker health...")
                 try:
                     ping_url = f"{self.settings['metadata_url']}/ping"
                     ping_req = Request(ping_url)
                     with urlopen(ping_req, timeout=2) as ping_response:
                         if ping_response.getcode() == 200:
                             # Server is alive but slow - just fail this track
-                            self.log(f"[Hydra+: ALBUM-META] Server alive but slow, skipping track")
+                            self.log(f"[ALBUM-META] Server alive but slow, skipping track")
                             return (False, file_path)
                 except:
                     # Server not responding - treat as crash
-                    self.log(f"[Hydra+: ALBUM-META] Server not responding after timeout")
+                    self.log(f"[ALBUM-META] Server not responding after timeout")
                     is_crash = True
 
             # If not a crash or stuck server, just fail
             if not is_crash:
-                self.log(f"[Hydra+: ALBUM-META] ✗ Error: {e}")
+                self.log(f"[ALBUM-META] Error: {e}")
                 return (False, file_path)
 
             # Server crashed or stuck - wait for restart and retry
-            self.log(f"[Hydra+: ALBUM-META] Server restarting, will retry...")
+            self.log(f"[ALBUM-META] Server restarting, will retry...")
             max_wait = 30
             for attempt in range(max_wait):
                 time.sleep(1)
@@ -2594,7 +2637,7 @@ class Plugin(BasePlugin):
                     ping_req = Request(ping_url)
                     with urlopen(ping_req, timeout=2) as ping_response:
                         if ping_response.getcode() == 200:
-                            self.log(f"[Hydra+: ALBUM-META] ✓ Metadata worker back online after {attempt + 1}s")
+                            self.log(f"[ALBUM-META] Metadata worker back online after {attempt + 1}s")
                             time.sleep(2)  # Give server time to stabilize
 
                             # Check if file was already renamed before the crash
@@ -2615,26 +2658,26 @@ class Plugin(BasePlugin):
                                 for possible_name in possible_names:
                                     possible_path = os.path.join(dir_path, possible_name)
                                     if os.path.exists(possible_path):
-                                        self.log(f"[Hydra+: ALBUM-META] File was already renamed to: {possible_name}")
+                                        self.log(f"[ALBUM-META] File was already renamed to: {possible_name}")
                                         actual_file_path = possible_path
                                         break
 
                             # Check if rename was successful
                             if os.path.exists(actual_file_path) and actual_file_path != file_path:
                                 if artist_name and artist_name in os.path.basename(actual_file_path):
-                                    self.log(f"[Hydra+: ALBUM-META] ✓ Track was already processed before crash")
+                                    self.log(f"[ALBUM-META] Track was already processed before crash")
                                     return (True, actual_file_path)
                                 else:
-                                    self.log(f"[Hydra+: ALBUM-META] ⚠ File renamed but missing artist name, needs retry")
+                                    self.log(f"[ALBUM-META] File renamed but missing artist name, needs retry")
 
                             # Retry the track
-                            self.log(f"[Hydra+: ALBUM-META] Retrying failed track: {os.path.basename(file_path)}")
+                            self.log(f"[ALBUM-META] Retrying failed track: {os.path.basename(file_path)}")
                             return self._process_single_track_metadata(file_path, track_info, token, track_index, target_folder)
                 except:
                     pass  # Server not ready yet, continue waiting
 
             # Server didn't come back online
-            self.log(f"[Hydra+: ALBUM-META] ✗ Server did not restart within {max_wait}s")
+            self.log(f"[ALBUM-META] Server did not restart within {max_wait}s")
             return (False, file_path)
         except Exception as e:
             error_msg = str(e).lower()
@@ -2646,7 +2689,7 @@ class Plugin(BasePlugin):
             ])
 
             if is_server_crash:
-                self.log(f"[Hydra+: ALBUM-META] Server restarting, will retry...")
+                self.log(f"[ALBUM-META] Server restarting, will retry...")
 
                 # Wait for server to restart (up to 30 seconds)
                 max_wait = 30
@@ -2658,7 +2701,7 @@ class Plugin(BasePlugin):
                         ping_req = Request(ping_url)
                         with urlopen(ping_req, timeout=2) as ping_response:
                             if ping_response.getcode() == 200:
-                                self.log(f"[Hydra+: ALBUM-META] ✓ Metadata worker back online after {attempt + 1}s")
+                                self.log(f"[ALBUM-META] Metadata worker back online after {attempt + 1}s")
                                 time.sleep(2)  # Give server time to stabilize
 
                                 # Check if file was already renamed before the crash
@@ -2681,7 +2724,7 @@ class Plugin(BasePlugin):
                                     for possible_name in possible_names:
                                         possible_path = os.path.join(dir_path, possible_name)
                                         if os.path.exists(possible_path):
-                                            self.log(f"[Hydra+: ALBUM-META] File was already renamed to: {possible_name}")
+                                            self.log(f"[ALBUM-META] File was already renamed to: {possible_name}")
                                             actual_file_path = possible_path
                                             break
 
@@ -2690,24 +2733,24 @@ class Plugin(BasePlugin):
                                 if os.path.exists(actual_file_path) and actual_file_path != file_path:
                                     # Verify it has the correct format with artist name
                                     if artist_name and artist_name in os.path.basename(actual_file_path):
-                                        self.log(f"[Hydra+: ALBUM-META] ✓ Track was already processed before crash")
+                                        self.log(f"[ALBUM-META] Track was already processed before crash")
                                         return (True, actual_file_path)
                                     else:
-                                        self.log(f"[Hydra+: ALBUM-META] ⚠ File renamed but missing artist name, needs retry")
+                                        self.log(f"[ALBUM-META] File renamed but missing artist name, needs retry")
                                         # Fall through to retry
 
                                 # File doesn't exist in any form, try retry
-                                self.log(f"[Hydra+: ALBUM-META] Retrying failed track: {os.path.basename(file_path)}")
+                                self.log(f"[ALBUM-META] Retrying failed track: {os.path.basename(file_path)}")
                                 return self._process_single_track_metadata(file_path, track_info, token, track_index, target_folder)
                     except:
                         pass  # Server not ready yet, continue waiting
 
                 # Server didn't come back online
-                self.log(f"[Hydra+: ALBUM-META] ✗ Server did not restart within {max_wait}s")
+                self.log(f"[ALBUM-META] Server did not restart within {max_wait}s")
                 return (False, file_path)
 
             # Not a crash, just a regular error
-            self.log(f"[Hydra+: ALBUM-META] ✗ Error: {e}")
+            self.log(f"[ALBUM-META] Error: {e}")
             return (False, file_path)
 
     def _process_album_track_metadata(self, file_path, track_info, search_info):
@@ -2721,18 +2764,18 @@ class Plugin(BasePlugin):
             # Wait for file to be fully written
             time.sleep(2)
 
-            self.log(f"[Hydra+: ALBUM-META] Starting processing for: {os.path.basename(file_path)}")
-            self.log(f"[Hydra+: ALBUM-META] Track #{track_info.get('track_number', 0)}: {track_info.get('track', '')}")
+            self.log(f"[ALBUM-META] Starting processing for: {os.path.basename(file_path)}")
+            self.log(f"[ALBUM-META] Track #{track_info.get('track_number', 0)}: {track_info.get('track', '')}")
 
             # Verify file exists and is MP3
             if not os.path.exists(file_path):
-                self.log(f"[Hydra+: ALBUM-META] ✗ File not found: {file_path}")
+                self.log(f"[ALBUM-META] File not found: {file_path}")
                 return
 
             # Check if file is MP3 or FLAC
             file_lower = file_path.lower()
             if not (file_lower.endswith('.mp3') or file_lower.endswith('.flac')):
-                self.log(f"[Hydra+: ALBUM-META] ✗ Unsupported format (only MP3/FLAC), skipping: {file_path}")
+                self.log(f"[ALBUM-META] Unsupported format (only MP3/FLAC), skipping: {file_path}")
                 return
 
             # IMPROVED: Check if we have prefetched ALBUM metadata in cache (with TTL check)
@@ -2746,11 +2789,11 @@ class Plugin(BasePlugin):
                     age = time.time() - cached_entry.get('timestamp', 0)
                     if age < self.metadata_cache_max_age:
                         album_metadata = cached_entry.get('data')
-                        self.log(f"[Hydra+: ALBUM-META]   Using cached album metadata (year={album_metadata.get('year', 'N/A')})")
+                        self.log(f"[ALBUM-META]   Using cached album metadata (year={album_metadata.get('year', 'N/A')})")
                     else:
                         # Expired, remove it
                         del self.metadata_cache[cache_key]
-                        self.log(f"[Hydra+: ALBUM-META]   Cached metadata expired (age={int(age)}s)")
+                        self.log(f"[ALBUM-META]   Cached metadata expired (age={int(age)}s)")
 
             # Prepare request data with track number (using camelCase for Node.js)
             payload = {
@@ -2759,7 +2802,9 @@ class Plugin(BasePlugin):
                 'track': track_info.get('track', ''),
                 'album': track_info.get('album', ''),
                 'trackId': track_info.get('track_id', ''),  # camelCase for Node.js
-                'trackNumber': track_info.get('track_number', 0)  # camelCase for Node.js
+                'trackNumber': track_info.get('track_number', 0),  # camelCase for Node.js
+                'headNumber': search_info.get('head_number', 1),  # camelCase for Node.js
+                'headScore': search_info.get('head_score', 0)  # camelCase for Node.js
             }
 
             # Add prefetched album metadata if available (server will skip Spotify page fetch)
@@ -2772,7 +2817,7 @@ class Plugin(BasePlugin):
             if target_folder:
                 payload['targetFolder'] = target_folder  # camelCase for Node.js
 
-            self.log(f"[Hydra+: ALBUM-META] Sending request to bridge server...")
+            self.debug_log(f"[ALBUM-META] Sending request to metadata server...")
 
             # Send to Metadata Worker with shorter timeout to avoid blocking
             url = f"{self.settings['metadata_url']}/process-metadata"
@@ -2784,28 +2829,31 @@ class Plugin(BasePlugin):
                 result = json.loads(response.read().decode('utf-8'))
 
                 if result.get('success'):
-                    self.log(f"[Hydra+: ALBUM-META] ✓ Processing successful!")
-
                     if result.get('renamed'):
-                        new_name = os.path.basename(result['new_path'])
-                        self.log(f"[Hydra+: ALBUM-META]   Renamed to: {new_name}")
+                        # Format FINISHED message for album tracks
+                        artist = track_info.get('artist', '')
+                        track_name = track_info.get('track', '')
+                        track_display = f"{artist} - {track_name}"
+                        head_num = search_info.get('head_number', 1)
+                        self.log(f"▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓  HEAD{head_num} FINISHED  ____ {track_display}        ^~~~~~~<:===<")
+
                         # Update the file path in downloaded_tracks
                         if 'downloaded_tracks' in search_info:
                             for i, path in enumerate(search_info['downloaded_tracks']):
                                 if path == file_path:
                                     search_info['downloaded_tracks'][i] = result['new_path']
-                                    self.log(f"[Hydra+: ALBUM-META]   Updated tracking path")
+                                    self.debug_log(f"[ALBUM-META]   Updated tracking path")
                                     break
                 else:
-                    self.log(f"[Hydra+: ALBUM-META] ✗ Failed: {result.get('error', 'Unknown error')}")
+                    self.log(f"[ALBUM-META] Failed: {result.get('error', 'Unknown error')}")
 
         except URLError as e:
-            self.log(f"[Hydra+: ALBUM-META] ✗ Cannot reach Node server: {e}")
-            self.log(f"[Hydra+: ALBUM-META] Make sure bridge server is running")
+            self.log(f"[ALBUM-META] Cannot reach Node server: {e}")
+            self.log(f"[ALBUM-META] Make sure bridge server is running")
         except Exception as e:
-            self.log(f"[Hydra+: ALBUM-META] ✗ Error: {e}")
+            self.log(f"[ALBUM-META] Error: {e}")
             import traceback
-            self.log(f"[Hydra+: ALBUM-META] {traceback.format_exc()}")
+            self.log(f"[ALBUM-META] {traceback.format_exc()}")
 
     def _monitor_album_download(self, token, search_info, current_time):
         """Monitor an album download to detect stuck/failed track downloads."""
@@ -2845,7 +2893,7 @@ class Plugin(BasePlugin):
 
                 # If first track isn't transferring after 15s, try next best folder
                 if not download_started_transferring:
-                    self.log(f"[Hydra+: ALBUM] ⚠ First track not transferring after 15s")
+                    self.log(f"[ALBUM] First track not transferring after 15s")
 
                     # Remove all queued tracks from the current folder attempt
                     # This prevents orphaned downloads in the queue when switching folders
@@ -2864,26 +2912,26 @@ class Plugin(BasePlugin):
 
                         # Remove all found transfers using the hierarchical abort approach
                         if transfers_to_remove:
-                            self.log(f"[Hydra+: ALBUM] Removing {len(transfers_to_remove)} queued track(s) from previous folder")
+                            self.log(f"[ALBUM] Removing {len(transfers_to_remove)} queued track(s) from previous folder")
 
                             # Try clear_downloads FIRST (removes from UI)
                             cleared = False
                             if hasattr(self.core.downloads, 'clear_downloads'):
                                 try:
                                     self.core.downloads.clear_downloads(transfers_to_remove)
-                                    self.log(f"[Hydra+: ALBUM] ✓ Cleared {len(transfers_to_remove)} transfer(s) from queue")
+                                    self.log(f"[ALBUM] Cleared {len(transfers_to_remove)} transfer(s) from queue")
                                     cleared = True
                                 except Exception as e:
-                                    self.log(f"[Hydra+: ALBUM] ✗ clear_downloads failed: {e}")
+                                    self.log(f"[ALBUM] clear_downloads failed: {e}")
 
                             # Fallback to abort_downloads if clear didn't work
                             if not cleared:
                                 if hasattr(self.core.downloads, 'abort_downloads'):
                                     try:
                                         self.core.downloads.abort_downloads(transfers_to_remove)
-                                        self.log(f"[Hydra+: ALBUM] ✓ Aborted {len(transfers_to_remove)} transfer(s)")
+                                        self.log(f"[ALBUM] Aborted {len(transfers_to_remove)} transfer(s)")
                                     except Exception as e:
-                                        self.log(f"[Hydra+: ALBUM] ✗ abort_downloads failed: {e}")
+                                        self.log(f"[ALBUM] abort_downloads failed: {e}")
                                         # Try abort_transfer individually as last resort
                                         if hasattr(self.core.downloads, 'abort_transfer'):
                                             for transfer in transfers_to_remove:
@@ -2923,8 +2971,8 @@ class Plugin(BasePlugin):
                             break
 
                     if next_folder:
-                        self.log(f"[Hydra+: ALBUM] 🔄 Trying next folder (score: {int(next_folder['score'])})")
-                        self.log(f"[Hydra+: ALBUM] From user: {next_folder['user']}")
+                        self.log(f"[ALBUM] 🔄 Trying next folder (score: {int(next_folder['score'])})")
+                        self.log(f"[ALBUM] From user: {next_folder['user']}")
 
                         # Reset for new folder
                         search_info['best_folder'] = next_folder
@@ -2936,13 +2984,13 @@ class Plugin(BasePlugin):
                         tracks_to_download = self._match_album_tracks(search_info, next_folder)
                         if tracks_to_download:
                             search_info['tracks_to_download'] = tracks_to_download
-                            self.log(f"[Hydra+: ALBUM] ✓ Matched {len(tracks_to_download)}/{len(search_info['tracks'])} tracks in new folder")
+                            self.log(f"[ALBUM] Matched {len(tracks_to_download)}/{len(search_info['tracks'])} tracks in new folder")
                             self._download_next_album_track(token, search_info)
                         else:
-                            self.log(f"[Hydra+: ALBUM] ✗ Could not match tracks in new folder, giving up")
+                            self.log(f"[ALBUM] Could not match tracks in new folder, giving up")
                             del self.active_searches[token]
                     else:
-                        self.log(f"[Hydra+: ALBUM] ✗ No more folders to try, giving up")
+                        self.log(f"[ALBUM] No more folders to try, giving up")
                         del self.active_searches[token]
 
                     return
@@ -2955,8 +3003,8 @@ class Plugin(BasePlugin):
                 # Check if download is still in the active_downloads tracking
                 if virtual_path not in self.active_downloads:
                     # Download isn't being tracked - might have failed silently
-                    self.log(f"[Hydra+: ALBUM] ⚠ Track {current_index + 1} not in tracking (after 90s)")
-                    self.log(f"[Hydra+: ALBUM] Skipping to next track...")
+                    self.log(f"[ALBUM] Track {current_index + 1} not in tracking (after 90s)")
+                    self.log(f"[ALBUM] Skipping to next track...")
 
                     # Move to next track
                     search_info['current_track_index'] += 1
@@ -2990,8 +3038,8 @@ class Plugin(BasePlugin):
                     skip_reason = "Download stuck in queue (not transferring)"
 
                 if should_skip:
-                    self.log(f"[Hydra+: ALBUM] ⚠ Track {current_index + 1}: {skip_reason} (after 90s)")
-                    self.log(f"[Hydra+: ALBUM] Skipping to next track...")
+                    self.log(f"[ALBUM] Track {current_index + 1}: {skip_reason} (after 90s)")
+                    self.log(f"[ALBUM] Skipping to next track...")
 
                     # Remove stuck download from queue using hierarchical abort approach
                     if transfer_obj:
@@ -3000,19 +3048,19 @@ class Plugin(BasePlugin):
                         if hasattr(self.core.downloads, 'clear_downloads'):
                             try:
                                 self.core.downloads.clear_downloads([transfer_obj])
-                                self.log(f"[Hydra+: ALBUM] ✓ Cleared stuck track from queue")
+                                self.log(f"[ALBUM] Cleared stuck track from queue")
                                 cleared = True
                             except Exception as e:
-                                self.log(f"[Hydra+: ALBUM] ✗ clear_downloads failed: {e}")
+                                self.log(f"[ALBUM] clear_downloads failed: {e}")
 
                         # Fallback to abort_downloads if clear didn't work
                         if not cleared:
                             if hasattr(self.core.downloads, 'abort_downloads'):
                                 try:
                                     self.core.downloads.abort_downloads([transfer_obj])
-                                    self.log(f"[Hydra+: ALBUM] ✓ Aborted stuck track")
+                                    self.log(f"[ALBUM] Aborted stuck track")
                                 except Exception as e:
-                                    self.log(f"[Hydra+: ALBUM] ✗ abort_downloads failed: {e}")
+                                    self.log(f"[ALBUM] abort_downloads failed: {e}")
                                     # Try abort_transfer as last resort
                                     if hasattr(self.core.downloads, 'abort_transfer'):
                                         try:
@@ -3037,20 +3085,20 @@ class Plugin(BasePlugin):
             # Overall timeout - 30 minutes for entire album
             album_elapsed = current_time - search_info['timestamp']
             if album_elapsed > 1800:
-                self.log(f"[Hydra+: ALBUM] ⚠ Album download timeout (30 minutes)")
+                self.log(f"[ALBUM] Album download timeout (30 minutes)")
 
                 # Finalize with whatever we have
                 if search_info.get('downloaded_tracks'):
-                    self.log(f"[Hydra+: ALBUM] Finalizing with {len(search_info['downloaded_tracks'])} downloaded tracks...")
+                    self.log(f"[ALBUM] Finalizing with {len(search_info['downloaded_tracks'])} downloaded tracks...")
                     self._finalize_album_download(token, search_info)
                 else:
-                    self.log(f"[Hydra+: ALBUM] ✗ No tracks downloaded, aborting")
+                    self.log(f"[ALBUM] No tracks downloaded, aborting")
                     del self.active_searches[token]
 
         except Exception as e:
-            self.log(f"[Hydra+: ALBUM] Error monitoring album download: {e}")
+            self.debug_log(f"[ALBUM] Error monitoring album download: {e}")
             import traceback
-            self.log(f"[Hydra+: ALBUM] Traceback: {traceback.format_exc()}")
+            self.debug_log(f"[ALBUM] Traceback: {traceback.format_exc()}")
 
     def _monitor_downloads(self):
         """Monitor active downloads and trigger fallback if stuck or failed."""
@@ -3117,22 +3165,22 @@ class Plugin(BasePlugin):
                         fallback_reason = f"Download failed: {download_status}"
 
                     if should_fallback:
-                        self.log(f"[Hydra+: DL] ⚠ {fallback_reason} (after 60s)")
+                        self.log(f"[DL] {fallback_reason} (after 60s)")
                         self._try_next_download_candidate(token, search_info, fallback_reason)
 
                 # Cleanup if download has been active for too long (5 minutes total)
                 search_elapsed = current_time - search_info['timestamp']
                 if search_elapsed > 300:
-                    self.log(f"[Hydra+: DL] ⚠ Timeout - removing search after 5 minutes")
+                    self.log(f"[DL] Timeout - removing search after 5 minutes")
                     # Clean up tracking
                     if search_info['last_download_path'] in self.active_downloads:
                         del self.active_downloads[search_info['last_download_path']]
                     del self.active_searches[token]
 
             except Exception as e:
-                self.log(f"[Hydra+: DL] Error monitoring downloads for search {token}: {e}")
+                self.debug_log(f"[DL] Error monitoring downloads for search {token}: {e}")
                 import traceback
-                self.log(f"[Hydra+: DL] Traceback: {traceback.format_exc()}")
+                self.debug_log(f"[DL] Traceback: {traceback.format_exc()}")
 
     def _trigger_album_search(self, search_data):
         """
@@ -3152,7 +3200,8 @@ class Plugin(BasePlugin):
             metadata_override = search_data.get('metadata_override', True)
             format_preference = search_data.get('format_preference', 'mp3')
 
-            self.log(f"[Hydra+: ALBUM] 🎵 Starting: {album_artist} - {album_name} ({len(tracks)} tracks, auto_download={auto_download}, format={format_preference.upper()})")
+            self.log(f"░░░░░ HEAD1 HUNTING ____ Search Started: {album_artist} - {album_name}")
+            self.debug_log(f"[ALBUM] {len(tracks)} tracks, auto_download={auto_download}, format={format_preference.upper()}")
 
             # Trigger search for album folder
             # Get tokens BEFORE the search to compare (do_search sometimes returns None)
@@ -3173,7 +3222,7 @@ class Plugin(BasePlugin):
                     search_token = max(tokens_after)
 
             if not search_token:
-                self.log(f"[Hydra+: ALBUM] ⚠ Failed to get search token")
+                self.log(f"[ALBUM] Failed to get search token")
                 return False
 
             # Track album search
@@ -3198,21 +3247,21 @@ class Plugin(BasePlugin):
                     'download_started_at': None,
                     'result_count': 0
                 }
-                self.log(f"[Hydra+: ALBUM] ✓ Tracking album search (token={search_token})")
+                self.log(f"[ALBUM] Tracking album search (token={search_token})")
             else:
-                self.log(f"[Hydra+: ALBUM] ⚠ Not tracking (auto_download disabled)")
+                self.log(f"[ALBUM] Not tracking (auto_download disabled)")
 
             return True
 
         except Exception as e:
-            self.log(f"[Hydra+: ALBUM] ERROR: {type(e).__name__}: {str(e)}")
+            self.log(f"[ALBUM] ERROR: {type(e).__name__}: {str(e)}")
             import traceback
-            self.log(f"[Hydra+: ALBUM] Traceback: {traceback.format_exc()}")
+            self.debug_log(f"[ALBUM] Traceback: {traceback.format_exc()}")
             return False
 
     def _poll_queue(self):
         """Poll the bridge server for new searches."""
-        self.log("[Hydra+] Polling loop started")
+        self.log("Polling loop started")
 
         # Wait for Nicotine+ to connect to the network before processing searches
         connection_wait_start = time.time()
@@ -3224,7 +3273,7 @@ class Plugin(BasePlugin):
                 if self._is_nicotine_online():
                     self.nicotine_online = True
                     self.waiting_for_connection = False
-                    self.log("[Hydra+] ✓ NICOTINE+ ONLINE → Plugin ready!")
+                    self.log("NICOTINE+ ONLINE → Plugin ready!")
                     break
 
                 # Check if we've waited too long
@@ -3233,18 +3282,18 @@ class Plugin(BasePlugin):
                     # After 60s, assume we're ready and let it try
                     self.nicotine_online = True
                     self.waiting_for_connection = False
-                    self.log("[Hydra+] ✓ Connection wait timeout - activating plugin")
+                    self.log("Connection wait timeout - activating plugin")
                     break
 
                 # Log progress every 10 seconds
                 if int(elapsed) % 10 == 0 and elapsed > 0:
-                    self.log(f"[Hydra+] Waiting for Nicotine+ connection... ({int(elapsed)}s)")
+                    self.log(f" Waiting for Nicotine+ connection... ({int(elapsed)}s)")
 
                 # Wait before checking again
                 time.sleep(1)
 
             except Exception as e:
-                self.log(f"[Hydra+] Error checking connection: {e}")
+                self.log(f" Error checking connection: {e}")
                 # Activate anyway on error to avoid blocking
                 self.nicotine_online = True
                 self.waiting_for_connection = False
@@ -3256,7 +3305,7 @@ class Plugin(BasePlugin):
                 server_running = self._is_server_running()
                 if self.server_was_running and not server_running:
                     # Server went offline - attempt auto-restart (normal during metadata processing)
-                    self.log("[Hydra+] Bridge server restarting...")
+                    self.log("Bridge server restarting...")
                     self.server_was_running = False
 
                     # Attempt to restart the server
@@ -3269,11 +3318,11 @@ class Plugin(BasePlugin):
 
                         # Now start fresh server
                         if self._start_server():
-                            self.log("[Hydra+] ✓ Bridge server restarted successfully")
+                            self.log("Bridge server restarted successfully")
                         else:
-                            self.log("[Hydra+] ✗ Failed to restart bridge server - please restart Nicotine+ manually")
+                            self.log("Failed to restart bridge server - please restart Nicotine+ manually")
                     else:
-                        self.log("[Hydra+] Auto-start disabled - please restart Nicotine+ manually")
+                        self.log("Auto-start disabled - please restart Nicotine+ manually")
                 elif server_running:
                     self.server_was_running = True
 
@@ -3343,7 +3392,7 @@ class Plugin(BasePlugin):
                         time.sleep(0.5)
 
             except Exception as e:
-                self.log(f"[Hydra+] Error in poll loop: {e}")
+                self.log(f" Error in poll loop: {e}")
 
             # Check for auto-download opportunities (event-driven now, just check timeouts)
             try:
@@ -3352,7 +3401,7 @@ class Plugin(BasePlugin):
                 if self.active_searches:
                     self.last_activity_time = time.time()
             except Exception as e:
-                self.log(f"[Hydra+] Error in auto-download check: {e}")
+                self.log(f" Error in auto-download check: {e}")
 
             # Monitor active downloads for failures/timeouts
             try:
@@ -3361,7 +3410,7 @@ class Plugin(BasePlugin):
                 if self.active_downloads:
                     self.last_activity_time = time.time()
             except Exception as e:
-                self.log(f"[Hydra+] Error in download monitoring: {e}")
+                self.log(f" Error in download monitoring: {e}")
 
             # IMPROVED: Adaptive polling - adjust interval based on activity
             time_since_activity = time.time() - self.last_activity_time
@@ -3382,7 +3431,7 @@ class Plugin(BasePlugin):
 
             # Log mode changes
             if old_mode != self.poll_mode:
-                self.log(f"[Hydra+] Poll mode: {old_mode} → {self.poll_mode} (interval: {self.current_poll_interval}s)")
+                self.log(f" Poll mode: {old_mode} → {self.poll_mode} (interval: {self.current_poll_interval}s)")
 
             # Wait before next poll
             time.sleep(self.current_poll_interval)

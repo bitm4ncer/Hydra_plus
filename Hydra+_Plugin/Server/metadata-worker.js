@@ -707,6 +707,8 @@ app.post('/process-metadata', async (req, res) => {
       album,
       trackId,
       trackNumber,
+      headNumber = 1,
+      headScore = 0,
       prefetchedYear,
       prefetchedImageUrl,
       targetFolder,
@@ -735,7 +737,11 @@ app.post('/process-metadata', async (req, res) => {
       label: null
     };
 
-    log(`Processing metadata for: ${path.basename(filePath)}`);
+    // Format artist - track for display
+    const trackDisplay = `${artist} - ${track}`;
+
+    log(`░░ HEAD${headNumber} INITIALIZED ~~~~~~~~~~~/\\~~~~~~~^~~~~~~~^~~~~~~<:===<`);
+    log(`░░░░░ HEAD${headNumber} HUNTING ____ Search Started: ${trackDisplay}`);
 
     // Check if file format is supported
     const ext = path.extname(filePath).toLowerCase();
@@ -745,8 +751,6 @@ app.post('/process-metadata', async (req, res) => {
     if (!isMP3 && !isFLAC) {
       return res.status(400).json({ error: `Unsupported format: ${ext} (only MP3/FLAC supported)` });
     }
-
-    log(`Format detected: ${isMP3 ? 'MP3' : 'FLAC'}`);
 
     // ========================================================================
     // STEP 1: RENAME FILE FIRST (before any network operations that could timeout)
@@ -815,7 +819,7 @@ app.post('/process-metadata', async (req, res) => {
     // ========================================================================
     setTimeout(async () => {
       try {
-        log('[META] Continuing metadata fetch in background...');
+        log(`░░░░░▒▒▒▒▒ HEAD${headNumber} FIRST BITE ____ Download Started: ${trackDisplay} (${headScore})`);
 
         // Step 3: Fetch extended metadata from Spotify
         // IMPROVED: Use prefetched metadata if available (skip Spotify page fetch)
@@ -823,7 +827,6 @@ app.post('/process-metadata', async (req, res) => {
 
         if (prefetchedYear || prefetchedImageUrl) {
           // Use prefetched metadata from Python cache
-          log('✓ Using prefetched metadata from cache');
           spotifyMetadata = {
             year: prefetchedYear || null,
             imageUrl: prefetchedImageUrl || null,
@@ -833,10 +836,8 @@ app.post('/process-metadata', async (req, res) => {
         } else if (shouldFetchSpotify && artist && track) {
           // Fallback: Fetch from Spotify (for single tracks or cache miss)
           try {
+            log(`░░░░░▒▒▒▒▒ HEAD${headNumber} SECOND BITE ____ Download: ${trackDisplay} (${headScore})`);
             spotifyMetadata = await getSpotifyMetadata(artist, track);
-            if (spotifyMetadata) {
-              log(`✓ Spotify metadata fetched`);
-            }
           } catch (spotifyError) {
             log(`✗ Spotify metadata error: ${spotifyError.message}`);
             spotifyMetadata = {};
@@ -851,7 +852,7 @@ app.post('/process-metadata', async (req, res) => {
 
           try {
             await downloadCoverArt(spotifyMetadata.imageUrl, coverArtPath);
-            log(`✓ Cover art downloaded`);
+            log(`░░░░░▒▒▒▒▒▓▓▓▓▓ HEAD${headNumber} COMPLETE ____ ${trackDisplay}`);
           } catch (error) {
             log(`✗ Cover art download failed: ${error.message}`);
             coverArtPath = null;
@@ -879,7 +880,7 @@ app.post('/process-metadata', async (req, res) => {
           }
 
           if (tagsWritten) {
-            log(`✓ Tags and cover art embedded`);
+            log(`▓ Tags embedded`);
           }
         }
 
@@ -891,7 +892,7 @@ app.post('/process-metadata', async (req, res) => {
         }
 
         const duration = Date.now() - startTime;
-        log(`✓ Background metadata processing complete (${duration}ms)`);
+        log(`▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓  HEAD${headNumber} FINISHED  ____ ${trackDisplay}        ^~~~~~~<:===<`);
 
       } catch (backgroundError) {
         log(`✗ Background processing error: ${backgroundError.message}`);
@@ -1046,6 +1047,19 @@ process.on('SIGINT', () => {
 process.on('SIGTERM', () => {
   log('Received SIGTERM - shutting down gracefully');
   process.exit(0);
+});
+
+// Handle uncaught errors to prevent crashes
+process.on('uncaughtException', (error) => {
+  console.error('[Metadata Worker] ✗ UNCAUGHT EXCEPTION:', error);
+  console.error('[Metadata Worker] Stack:', error.stack);
+  // Don't exit - let the worker keep running
+});
+
+process.on('unhandledRejection', (reason, promise) => {
+  console.error('[Metadata Worker] ✗ UNHANDLED REJECTION at:', promise);
+  console.error('[Metadata Worker] Reason:', reason);
+  // Don't exit - let the worker keep running
 });
 
 // Start the server
