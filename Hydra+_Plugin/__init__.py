@@ -578,9 +578,11 @@ class Plugin(BasePlugin):
 
             # Non-blocking - don't wait for response
             urlopen(req, timeout=0.5)
-        except Exception:
-            # Silently fail - don't spam logs if bridge is offline
-            pass
+            # Debug: confirm event was sent
+            self.log(f"[Hydra+: EVENT] ✓ Sent to bridge: {message[:50]}")
+        except Exception as e:
+            # Debug: log errors temporarily
+            self.log(f"[Hydra+: EVENT] ✗ Failed to send event: {e}")
 
     def _send_progress_update(self, track_id, filename, progress, bytes_downloaded, total_bytes):
         """Send download progress update to bridge server.

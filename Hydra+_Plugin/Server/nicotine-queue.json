@@ -1,99 +1,163 @@
 {
   "searches": [
     {
-      "query": "Alex Kassian Trippy Gas",
-      "artist": "Alex Kassian",
-      "track": "Trippy Gas",
+      "query": "D.K. Untitled 5",
+      "artist": "D.K.",
+      "track": "Untitled 5",
       "album": "",
-      "track_id": "6zm5Z0rHF1qUswNnCH14Ke",
-      "duration": 249,
+      "track_id": "1XvtOirShjzB4JhaoMVXXy",
+      "duration": 472,
       "auto_download": true,
       "metadata_override": true,
-      "timestamp": "2025-10-18T03:53:03.220Z",
+      "format_preference": "mp3",
+      "timestamp": "2025-10-20T02:14:47.770Z",
       "processed": true
     },
     {
-      "query": "Alex Kassian Trippy Gas",
-      "artist": "Alex Kassian",
-      "track": "Trippy Gas",
+      "type": "album",
+      "query": "D.K. Live at the Edge",
+      "album_id": "17PBEK42ESY3zSD5aiVi5W",
+      "album_name": "Live at the Edge",
+      "album_artist": "D.K.",
+      "year": "2020",
+      "tracks": [
+        {
+          "track_number": 1,
+          "artist": "D.K.",
+          "track": "Untitled 1",
+          "album": "Live at the Edge",
+          "track_id": "6V4uOrp1UTg1iWK5ffjMth",
+          "duration": 249
+        },
+        {
+          "track_number": 2,
+          "artist": "D.K.",
+          "track": "Untitled 2",
+          "album": "Live at the Edge",
+          "track_id": "5wB2kMHck31BNWrFuaqZWu",
+          "duration": 444
+        },
+        {
+          "track_number": 3,
+          "artist": "D.K.",
+          "track": "Untitled 3",
+          "album": "Live at the Edge",
+          "track_id": "5vJKFIB8PUU7gH5QYztlfE",
+          "duration": 457
+        },
+        {
+          "track_number": 4,
+          "artist": "D.K.",
+          "track": "Untitled 4",
+          "album": "Live at the Edge",
+          "track_id": "7bblgIomw7bOsRlLd5jHpA",
+          "duration": 438
+        },
+        {
+          "track_number": 5,
+          "artist": "D.K.",
+          "track": "Untitled 5",
+          "album": "Live at the Edge",
+          "track_id": "1XvtOirShjzB4JhaoMVXXy",
+          "duration": 472
+        },
+        {
+          "track_number": 6,
+          "artist": "D.K.",
+          "track": "Untitled 6",
+          "album": "Live at the Edge",
+          "track_id": "5ySk5dkD2TM6QYmiZOCbBF",
+          "duration": 430
+        }
+      ],
+      "auto_download": true,
+      "metadata_override": true,
+      "format_preference": "mp3",
+      "timestamp": "2025-10-20T02:15:57.143Z",
+      "processed": true
+    },
+    {
+      "type": "album",
+      "query": "D.K. Island of Dreams",
+      "album_id": "4wdgQpzv52hpV0CNu4AmLw",
+      "album_name": "Island of Dreams",
+      "album_artist": "D.K.",
+      "year": "2015",
+      "tracks": [
+        {
+          "track_number": 1,
+          "artist": "D.K.",
+          "track": "Evening Shadows",
+          "album": "Island of Dreams",
+          "track_id": "6WYCTAFeTwbuXibIIQ0vPe",
+          "duration": 222
+        },
+        {
+          "track_number": 2,
+          "artist": "D.K.",
+          "track": "Ivory Forest",
+          "album": "Island of Dreams",
+          "track_id": "6j39osv7FnI6mm3AgYKmeU",
+          "duration": 153
+        },
+        {
+          "track_number": 3,
+          "artist": "D.K.",
+          "track": "Play On",
+          "album": "Island of Dreams",
+          "track_id": "45LU5j3n7E1B4080gYosZZ",
+          "duration": 231
+        },
+        {
+          "track_number": 4,
+          "artist": "D.K.",
+          "track": "Journey to the Sun",
+          "album": "Island of Dreams",
+          "track_id": "0y7loi7lFtfNPF5pxJamiw",
+          "duration": 235
+        },
+        {
+          "track_number": 5,
+          "artist": "D.K.",
+          "track": "Memories",
+          "album": "Island of Dreams",
+          "track_id": "6NDTAB4UCIBBfeqXQ7t7G5",
+          "duration": 257
+        },
+        {
+          "track_number": 6,
+          "artist": "D.K.",
+          "track": "Raindrops",
+          "album": "Island of Dreams",
+          "track_id": "1sfE41OmWYA1KIdXaJkZ1K",
+          "duration": 254
+        },
+        {
+          "track_number": 7,
+          "artist": "D.K.",
+          "track": "High on the Sea",
+          "album": "Island of Dreams",
+          "track_id": "1eIdRAK111mG25nSsy2svy",
+          "duration": 213
+        }
+      ],
+      "auto_download": true,
+      "metadata_override": true,
+      "format_preference": "mp3",
+      "timestamp": "2025-10-20T02:21:35.068Z",
+      "processed": true
+    },
+    {
+      "query": "D.K. Raindrops",
+      "artist": "D.K.",
+      "track": "Raindrops",
       "album": "",
-      "track_id": "6zm5Z0rHF1qUswNnCH14Ke",
-      "duration": 249,
+      "track_id": "1sfE41OmWYA1KIdXaJkZ1K",
+      "duration": 254,
       "auto_download": true,
       "metadata_override": true,
-      "timestamp": "2025-10-18T03:54:47.141Z",
-      "processed": true
-    },
-    {
-      "query": "Puretone Addicted to Bass",
-      "artist": "Puretone",
-      "track": "Addicted to Bass",
-      "album": "Stuck In A Groove",
-      "track_id": "6HV4jwHrovGzss1rijtwRF",
-      "duration": 235,
-      "auto_download": true,
-      "metadata_override": true,
-      "timestamp": "2025-10-18T03:56:30.320Z",
-      "processed": true
-    },
-    {
-      "query": "DAWL System Check",
-      "artist": "DAWL",
-      "track": "System Check",
-      "album": "Hyper Charged EP",
-      "track_id": "2KZysTEPzKnDj0asWK8Lrl",
-      "duration": 317,
-      "auto_download": true,
-      "metadata_override": true,
-      "timestamp": "2025-10-18T03:59:02.799Z",
-      "processed": true
-    },
-    {
-      "query": "RICO 909 B3 Track 13 - Extended Version",
-      "artist": "RICO 909",
-      "track": "B3 Track 13 - Extended Version",
-      "album": "Rave tracks 1997-98",
-      "track_id": "4dTBiMt5ihRoGwNjHj7VhR",
-      "duration": 232,
-      "auto_download": true,
-      "metadata_override": true,
-      "timestamp": "2025-10-18T04:00:34.163Z",
-      "processed": true
-    },
-    {
-      "query": "Joy Orbison Off Season",
-      "artist": "Joy Orbison",
-      "track": "Off Season",
-      "album": "Off Season / Fuerza",
-      "track_id": "3rYTTNvIXAJ4VHbcItePrv",
-      "duration": 312,
-      "auto_download": true,
-      "metadata_override": true,
-      "timestamp": "2025-10-18T04:00:55.106Z",
-      "processed": true
-    },
-    {
-      "query": "Akkord Folded Edge",
-      "artist": "Akkord",
-      "track": "Folded Edge",
-      "album": "Akkord",
-      "track_id": "2xpdRXwA6Mq7WVJFWriJiQ",
-      "duration": 317,
-      "auto_download": true,
-      "metadata_override": true,
-      "timestamp": "2025-10-18T04:01:14.324Z",
-      "processed": true
-    },
-    {
-      "query": "Pearson Sound Hornet",
-      "artist": "Pearson Sound",
-      "track": "Hornet",
-      "album": "Which Way Is Up",
-      "track_id": "2KQzEeEidOceAEQpyQnoRM",
-      "duration": 326,
-      "auto_download": true,
-      "metadata_override": true,
-      "timestamp": "2025-10-18T04:01:33.255Z",
+      "format_preference": "mp3",
+      "timestamp": "2025-10-20T02:26:21.630Z",
       "processed": true
     }
   ]

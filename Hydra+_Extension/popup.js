@@ -270,8 +270,14 @@ function updateProgressBars(activeDownloads) {
   existingBars.forEach(bar => bar.remove());
 
   // Add progress bar for each active download
+  const now = Date.now();
   for (const [trackId, progressData] of Object.entries(activeDownloads)) {
-    const { filename, progress, bytesDownloaded, totalBytes } = progressData;
+    const { filename, progress, bytesDownloaded, totalBytes, lastUpdate } = progressData;
+
+    // Skip if progress data is older than 30 seconds (stale)
+    if (lastUpdate && (now - lastUpdate) > 30000) {
+      continue;
+    }
 
     // Create progress bar entry
     const entry = document.createElement('div');
@@ -560,8 +566,13 @@ async function checkServerStatus() {
 
       // Process events if provided by server
       if (data.events && Array.isArray(data.events)) {
+        // Debug: Log all events from server
+        console.log('[Hydra+] Events from server:', data.events.length, 'events, lastEventId:', lastEventId);
+
         // Filter out events we've already seen
         const newEvents = data.events.filter(event => event.id > lastEventId);
+
+        console.log('[Hydra+] New events to process:', newEvents.length);
 
         newEvents.forEach(event => {
           // Update last event ID

@@ -807,6 +807,9 @@ const server = http.createServer((req, res) => {
         const data = JSON.parse(body);
         const { type, message, trackId } = data;
 
+        // Debug: Log received event
+        console.log(`[Hydra+: EVENT] Received: [${type}] ${message.substring(0, 60)} (trackId: ${trackId || 'none'})`);
+
         // Add event to tracking
         addEvent(type || 'info', message, trackId);
 
@@ -834,6 +837,11 @@ const server = http.createServer((req, res) => {
       try {
         const data = JSON.parse(body);
         const { trackId, filename, progress, bytesDownloaded, totalBytes } = data;
+
+        // Debug: Log progress update (throttled to avoid spam)
+        if (progress === 0 || progress >= 100 || Math.floor(progress) % 10 === 0) {
+          console.log(`[Hydra+: PROGRESS] ${filename.substring(0, 40)}: ${Math.round(progress)}%`);
+        }
 
         // Update active download progress
         updateDownloadProgress(trackId, filename, progress, bytesDownloaded, totalBytes);
