@@ -165,30 +165,52 @@ function addEvent(type, message, trackId = null) {
 // Cleanup stale progress entries
 function cleanupStaleProgress() {
   const now = Date.now();
-  const cutoffTime = now - PROGRESS_MAX_AGE;
+  const staleCutoff = now - PROGRESS_MAX_AGE; // 10 minutes for stale
+  const completedCutoff = 60000; // 1 minute for completed
 
   let removed = 0;
   for (const [trackId, progressData] of activeDownloads.entries()) {
-    if (progressData.lastUpdate < cutoffTime) {
+    // Remove if stale (no updates in 10 minutes)
+    if (progressData.lastUpdate < staleCutoff) {
+      activeDownloads.delete(trackId);
+      removed++;
+      continue;
+    }
+
+    // Remove if completed over 1 minute ago
+    if (progressData.completedAt && (now - progressData.completedAt) > completedCutoff) {
       activeDownloads.delete(trackId);
       removed++;
     }
   }
 
   if (removed > 0) {
-    console.log(`[Hydra+: PROGRESS] Cleaned up ${removed} stale progress entries`);
+    console.log(`[Hydra+: PROGRESS] Cleaned up ${removed} stale/completed progress entries`);
   }
 }
 
 // Update or add download progress
 function updateDownloadProgress(trackId, filename, progress, bytesDownloaded, totalBytes) {
+  const now = Date.now();
+  const existingEntry = activeDownloads.get(trackId);
+
   activeDownloads.set(trackId, {
     filename,
     progress,
     bytesDownloaded,
     totalBytes,
-    lastUpdate: Date.now()
+    lastUpdate: now,
+    completedAt: progress >= 100 ? (existingEntry?.completedAt || now) : null
   });
+
+  // Auto-remove completed downloads after 1 minute
+  if (progress >= 100) {
+    const completedAt = existingEntry?.completedAt || now;
+    if (now - completedAt > 60000) {
+      activeDownloads.delete(trackId);
+      console.log(`[Hydra+: PROGRESS] Auto-removed completed download: ${filename.substring(0, 40)}`);
+    }
+  }
 
   // Periodically cleanup stale entries (every 50 updates)
   if (activeDownloads.size > 0 && activeDownloads.size % 50 === 0) {

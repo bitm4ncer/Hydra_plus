@@ -269,12 +269,11 @@ const completionTimes = new Map(); // trackId -> timestamp
 
 // Update vertical progress bars in the right container
 function updateProgressBars(activeDownloads) {
-  // Clear existing progress bars
-  progressBarsContainer.innerHTML = '';
-
-  // Add vertical progress bar for each active download
   const now = Date.now();
   let hasActiveBars = false;
+
+  // Get list of track IDs that should be displayed
+  const activeTrackIds = new Set();
 
   for (const [trackId, progressData] of Object.entries(activeDownloads)) {
     const { filename, progress, bytesDownloaded, totalBytes, lastUpdate } = progressData;
@@ -292,7 +291,7 @@ function updateProgressBars(activeDownloads) {
       const completionTime = completionTimes.get(trackId);
       if (now - completionTime > 60000) {
         completionTimes.delete(trackId);
-        continue; // Skip rendering this bar
+        continue; // Don't display this bar
       }
     }
 
@@ -301,29 +300,68 @@ function updateProgressBars(activeDownloads) {
       continue;
     }
 
+    activeTrackIds.add(trackId);
     hasActiveBars = true;
+  }
+
+  // Remove bars that are no longer active
+  const existingBars = progressBarsContainer.querySelectorAll('.vertical-progress-bar');
+  existingBars.forEach(bar => {
+    const trackId = bar.getAttribute('data-track-id');
+    if (!activeTrackIds.has(trackId)) {
+      bar.remove();
+    }
+  });
+
+  // Update or create bars for active downloads
+  for (const [trackId, progressData] of Object.entries(activeDownloads)) {
+    if (!activeTrackIds.has(trackId)) continue;
+
+    const { filename, progress } = progressData;
+    const isComplete = progress >= 100;
 
     // Get track color
     const trackColor = getTrackColor(trackId);
 
-    // Create minimalistic vertical progress bar
-    const barContainer = document.createElement('div');
-    barContainer.className = 'vertical-progress-bar';
-    if (isComplete) {
-      barContainer.classList.add('completed');
+    // Find existing bar or create new one
+    let barContainer = progressBarsContainer.querySelector(`[data-track-id="${trackId}"]`);
+
+    if (!barContainer) {
+      // Create new bar
+      barContainer = document.createElement('div');
+      barContainer.className = 'vertical-progress-bar';
+      barContainer.setAttribute('data-track-id', trackId);
+      barContainer.title = filename; // Tooltip shows filename on hover
+
+      // Create the fill element
+      const fill = document.createElement('div');
+      fill.className = 'progress-bar-fill-vertical';
+      fill.style.height = `${progress}%`;
+      fill.style.backgroundColor = trackColor || '#B9FF37';
+
+      barContainer.appendChild(fill);
+      progressBarsContainer.appendChild(barContainer);
+    } else {
+      // Update existing bar
+      const fill = barContainer.querySelector('.progress-bar-fill-vertical');
+      if (fill) {
+        fill.style.height = `${progress}%`;
+        fill.style.backgroundColor = trackColor || '#B9FF37';
+      }
+
+      // Update completed state
+      if (isComplete && !barContainer.classList.contains('completed')) {
+        barContainer.classList.add('completed');
+      } else if (!isComplete && barContainer.classList.contains('completed')) {
+        barContainer.classList.remove('completed');
+      }
+
+      // Update tooltip
+      barContainer.title = filename;
     }
-    barContainer.setAttribute('data-track-id', trackId);
-    barContainer.title = filename; // Tooltip shows filename on hover
-
-    // Ultra-minimalistic: just the bar and fill, no text
-    barContainer.innerHTML = `
-      <div class="progress-bar-fill-vertical" style="height: ${progress}%; background-color: ${trackColor || '#B9FF37'};"></div>
-    `;
-
-    progressBarsContainer.appendChild(barContainer);
   }
 
-  // If no active bars, hide the container to save space
+  // Show/hide container
   if (!hasActiveBars) {
     progressBarsContainer.style.display = 'none';
   } else {
