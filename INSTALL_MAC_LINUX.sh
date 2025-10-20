@@ -207,7 +207,7 @@ echo -e "${GREEN}  =============================================================
 echo ""
 echo "  Progress: [################........] 80%"
 echo ""
-echo "  Installing npm packages (node-id3, flac-tagger)..."
+echo "  Installing npm packages (express, cors, node-id3, flac-tagger)..."
 echo "  This may take a moment..."
 echo ""
 
@@ -223,6 +223,16 @@ if [ -f "package.json" ]; then
         echo -e "${GREEN}  +-------------------------------------------------------------------+${NC}"
         echo ""
         echo "  Verifying packages..."
+        if [ -d "node_modules/express" ]; then
+            echo -e "${GREEN}  [√] express installed${NC}"
+        else
+            echo -e "${RED}  [X] express MISSING${NC}"
+        fi
+        if [ -d "node_modules/cors" ]; then
+            echo -e "${GREEN}  [√] cors installed${NC}"
+        else
+            echo -e "${RED}  [X] cors MISSING${NC}"
+        fi
         if [ -d "node_modules/node-id3" ]; then
             echo -e "${GREEN}  [√] node-id3 installed${NC}"
         else

@@ -5,10 +5,10 @@ Multi-headed Spotify → Soulseek bridge with intelligent auto-download.
 Connects to the bridge server to receive track searches from the browser
 extension and automatically triggers searches in Nicotine+.
 
-Version: 0.1.7
+Version: 0.1.8
 """
 
-__version__ = "0.1.7"
+__version__ = "0.1.8"
 
 from pynicotine.pluginsystem import BasePlugin
 from pynicotine.events import events
@@ -36,7 +36,8 @@ class Plugin(BasePlugin):
 
         # Plugin settings
         self.settings = {
-            'bridge_url': 'http://127.0.0.1:3847',
+            'bridge_url': 'http://127.0.0.1:3847',        # State server (progress, events, queue)
+            'metadata_url': 'http://127.0.0.1:3848',      # Metadata worker (Spotify, tags, covers)
             'poll_interval': 2,
             'auto_start_server': True,
             # Metadata processing settings (handled by Node.js server)
@@ -72,7 +73,8 @@ class Plugin(BasePlugin):
         self.running = False
         self.thread = None
         self.processed_timestamps = {}  # Track processed searches with timestamps {search_ts: processed_at}
-        self.server_process = None  # Track server process if we started it
+        self.server_process = None  # Track state server process if we started it
+        self.metadata_process = None  # Track metadata worker process if we started it
         self.active_searches = {}  # Track searches with metadata and ranked download candidates
         self.active_downloads = {}  # Track {virtual_path: search_token} for fallback
         self.nicotine_online = False  # Track if Nicotine+ is connected to the network
@@ -91,9 +93,11 @@ class Plugin(BasePlugin):
         self.progress_thread = None  # Thread for monitoring download progress
         self.progress_running = False  # Flag to control progress monitoring thread
 
-        # Get plugin directory and server path
+        # Get plugin directory and server paths
         self.plugin_dir = os.path.dirname(os.path.abspath(__file__))
-        self.server_path = os.path.join(self.plugin_dir, 'Server', 'bridge-server.js')
+        self.server_path = os.path.join(self.plugin_dir, 'Server', 'bridge-server.js')  # Legacy (will be replaced)
+        self.state_server_path = os.path.join(self.plugin_dir, 'Server', 'state-server.js')
+        self.metadata_worker_path = os.path.join(self.plugin_dir, 'Server', 'metadata-worker.js')
 
     def _is_nicotine_online(self):
         """Check if Nicotine+ is connected to the Soulseek server."""
@@ -201,13 +205,17 @@ class Plugin(BasePlugin):
             return False
 
     def _start_server(self):
-        """Start the bridge server if it's not running."""
+        """Start both state server and metadata worker."""
         if not self.settings.get('auto_start_server', True):
             self.log("[Hydra+] Auto-start disabled in settings")
             return False
 
-        if not os.path.exists(self.server_path):
-            self.log(f"[Hydra+] Server not found at: {self.server_path}")
+        if not os.path.exists(self.state_server_path):
+            self.log(f"[Hydra+] State server not found at: {self.state_server_path}")
+            return False
+
+        if not os.path.exists(self.metadata_worker_path):
+            self.log(f"[Hydra+] Metadata worker not found at: {self.metadata_worker_path}")
             return False
 
         # Check and install dependencies if needed
@@ -216,63 +224,88 @@ class Plugin(BasePlugin):
             return False
 
         try:
-            self.log(f"[Hydra+] Starting bridge server...")
-            self.log(f"[Hydra+] Server path: {self.server_path}")
+            self.log(f"[Hydra+] Starting dual server architecture...")
 
-            # Start the Node.js server in the background
-            # Use CREATE_NO_WINDOW flag on Windows to hide console window
+            # Configure subprocess to show console windows (for debugging)
             startupinfo = None
             creationflags = 0
             if os.name == 'nt':  # Windows
                 startupinfo = subprocess.STARTUPINFO()
-                startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
-                startupinfo.wShowWindow = subprocess.SW_HIDE
-                # CREATE_NO_WINDOW flag prevents console window from appearing
-                creationflags = 0x08000000  # CREATE_NO_WINDOW
+                # CREATE_NEW_CONSOLE flag creates a visible console window for each server
+                creationflags = subprocess.CREATE_NEW_CONSOLE
 
+            # Start State Server (Port 3847) with visible console
+            self.log(f"[Hydra+] Starting state server (Port 3847)...")
             self.server_process = subprocess.Popen(
-                ['node', self.server_path],
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
+                ['node', self.state_server_path],
                 startupinfo=startupinfo,
                 creationflags=creationflags
             )
 
-            self.log("[Hydra+] Bridge server process started, will verify in background")
+            # Wait briefly for state server to initialize
+            time.sleep(1)
+
+            # Start Metadata Worker (Port 3848) with visible console
+            self.log(f"[Hydra+] Starting metadata worker (Port 3848)...")
+            self.metadata_process = subprocess.Popen(
+                ['node', self.metadata_worker_path],
+                startupinfo=startupinfo,
+                creationflags=creationflags
+            )
+
+            self.log("[Hydra+] Both servers started with visible consoles, will verify in background")
             return True
 
         except FileNotFoundError:
             self.log("[Hydra+] ERROR: NODE.JS NOT FOUND - Please install Node.js")
             return False
         except Exception as e:
-            self.log(f"[Hydra+] ERROR: Starting server failed: {e}")
+            self.log(f"[Hydra+] ERROR: Starting servers failed: {e}")
             return False
 
     def _cleanup_server_process(self):
-        """Kill any existing server process and clean up."""
+        """Kill both state server and metadata worker processes and clean up."""
         try:
-            # Try to terminate our tracked process first
+            # Terminate state server process
             if self.server_process:
                 try:
-                    self.log("[Hydra+] Terminating existing server process...")
+                    self.log("[Hydra+] Terminating state server process...")
                     self.server_process.terminate()
                     self.server_process.wait(timeout=3)
-                    self.log("[Hydra+] ✓ Old process terminated")
+                    self.log("[Hydra+] ✓ State server terminated")
                 except:
                     try:
                         self.server_process.kill()
-                        self.log("[Hydra+] ✓ Old process killed (force)")
+                        self.log("[Hydra+] ✓ State server killed (force)")
                     except:
                         pass
                 finally:
                     self.server_process = None
 
-            # Also kill any node.js processes running bridge-server.js (Windows-specific cleanup)
+            # Terminate metadata worker process
+            if self.metadata_process:
+                try:
+                    self.log("[Hydra+] Terminating metadata worker process...")
+                    self.metadata_process.terminate()
+                    self.metadata_process.wait(timeout=3)
+                    self.log("[Hydra+] ✓ Metadata worker terminated")
+                except:
+                    try:
+                        self.metadata_process.kill()
+                        self.log("[Hydra+] ✓ Metadata worker killed (force)")
+                    except:
+                        pass
+                finally:
+                    self.metadata_process = None
+
+            # Also kill any node.js processes running the servers (Windows-specific cleanup)
             if os.name == 'nt':  # Windows
                 try:
                     import subprocess
-                    # Find and kill any node processes running bridge-server.js
-                    subprocess.run(['taskkill', '/F', '/FI', 'IMAGENAME eq node.exe', '/FI', f'WINDOWTITLE eq *bridge-server.js*'],
+                    # Find and kill any node processes running state-server.js or metadata-worker.js
+                    subprocess.run(['taskkill', '/F', '/FI', 'IMAGENAME eq node.exe', '/FI', f'WINDOWTITLE eq *state-server.js*'],
+                                   capture_output=True, timeout=5)
+                    subprocess.run(['taskkill', '/F', '/FI', 'IMAGENAME eq node.exe', '/FI', f'WINDOWTITLE eq *metadata-worker.js*'],
                                    capture_output=True, timeout=5)
                 except:
                     pass
@@ -684,21 +717,10 @@ class Plugin(BasePlugin):
                         # self._remove_progress_tracking(track_id)
                         self.log(f"[Hydra+: PROGRESS] Download finished from monitoring: trackId={track_id}")
 
-                # DEBUG: Log monitoring cycle
-                if len(transfers) > 0:
-                    active_count = sum(1 for vp in transfers.keys() if vp in self.active_downloads)
-                    self.log(f"[Hydra+: PROGRESS] Monitoring {len(transfers)} transfers ({active_count} tracked)")
-
-                    # DEBUG: Show what paths we're seeing vs. what we're tracking
-                    if active_count == 0 and len(self.active_downloads) > 0:
-                        transfer_paths = list(transfers.keys())[:2]  # Show first 2
-                        tracked_paths = list(self.active_downloads.keys())[:2]  # Show first 2
-                        # CRITICAL: Show FULL paths to understand format mismatch
-                        self.log(f"[Hydra+: PROGRESS] === PATH MISMATCH DEBUG ===")
-                        for i, tp in enumerate(transfer_paths):
-                            self.log(f"[Hydra+: PROGRESS] Transfer path {i+1}: {repr(tp)}")
-                        for i, tp in enumerate(tracked_paths):
-                            self.log(f"[Hydra+: PROGRESS] Tracked path {i+1}: {repr(tp)}")
+                # DEBUG: Log monitoring cycle (disabled to reduce spam)
+                # if len(transfers) > 0:
+                #     active_count = sum(1 for vp in transfers.keys() if vp in self.active_downloads)
+                #     self.log(f"[Hydra+: PROGRESS] Monitoring {len(transfers)} transfers ({active_count} tracked)")
 
                 for virtual_path, transfer in transfers.items():
                     try:
@@ -713,13 +735,7 @@ class Plugin(BasePlugin):
 
                         # Skip downloads that are no longer in our active tracking
                         if virtual_path not in self.active_downloads:
-                            # DEBUG: Log why we're skipping
-                            if len(self.active_downloads) > 0:
-                                self.log(f"[Hydra+: PROGRESS] ⚠ Skipping untracked: {virtual_path[:60]}")
                             continue
-
-                        # DEBUG: Found a match!
-                        self.log(f"[Hydra+: PROGRESS] ✓ MATCH FOUND: {virtual_path[:60]}")
 
                         # Get progress data
                         total_bytes = transfer.size
@@ -1591,7 +1607,7 @@ class Plugin(BasePlugin):
                 'download_dir': download_dir
             }
 
-            url = f"{self.settings['bridge_url']}/ensure-album-folder"
+            url = f"{self.settings['metadata_url']}/ensure-album-folder"
             req = Request(url,
                          data=json.dumps(payload).encode('utf-8'),
                          headers={'Content-Type': 'application/json'})
@@ -1914,17 +1930,17 @@ class Plugin(BasePlugin):
 
             self.log(f"[Hydra+: META] Sending to Node server for processing...")
 
-            # Prepare request data
+            # Prepare request data (using camelCase for Node.js)
             payload = {
-                'file_path': file_path,
+                'filePath': file_path,  # camelCase for Node.js
                 'artist': search_info.get('artist', ''),
                 'track': search_info.get('track', ''),
                 'album': search_info.get('album', ''),
-                'track_id': search_info.get('track_id', '')
+                'trackId': search_info.get('track_id', '')  # camelCase for Node.js
             }
 
-            # Send to Node server
-            url = f"{self.settings['bridge_url']}/process-metadata"
+            # Send to Metadata Worker
+            url = f"{self.settings['metadata_url']}/process-metadata"
             req = Request(url,
                          data=json.dumps(payload).encode('utf-8'),
                          headers={'Content-Type': 'application/json'})
@@ -2027,7 +2043,7 @@ class Plugin(BasePlugin):
                 'track_files': track_file_paths
             }
 
-            url = f"{self.settings['bridge_url']}/create-album-folder"
+            url = f"{self.settings['metadata_url']}/organize-album"
             req = Request(url,
                          data=json.dumps(payload).encode('utf-8'),
                          headers={'Content-Type': 'application/json'})
@@ -2403,8 +2419,8 @@ class Plugin(BasePlugin):
             if target_folder:
                 payload['target_folder'] = target_folder
 
-            # Send to Node server with REDUCED timeout (server responds immediately now)
-            url = f"{self.settings['bridge_url']}/process-metadata"
+            # Send to Metadata Worker with REDUCED timeout (server responds immediately now)
+            url = f"{self.settings['metadata_url']}/process-metadata"
             req = Request(url,
                          data=json.dumps(payload).encode('utf-8'),
                          headers={'Content-Type': 'application/json'})
@@ -2438,9 +2454,9 @@ class Plugin(BasePlugin):
 
             # If timeout, check if server is still alive
             if is_timeout and not is_crash:
-                self.log(f"[Hydra+: ALBUM-META] Timeout, checking server health...")
+                self.log(f"[Hydra+: ALBUM-META] Timeout, checking metadata worker health...")
                 try:
-                    ping_url = f"{self.settings['bridge_url']}/ping"
+                    ping_url = f"{self.settings['metadata_url']}/ping"
                     ping_req = Request(ping_url)
                     with urlopen(ping_req, timeout=2) as ping_response:
                         if ping_response.getcode() == 200:
@@ -2463,12 +2479,12 @@ class Plugin(BasePlugin):
             for attempt in range(max_wait):
                 time.sleep(1)
                 try:
-                    # Try to ping the server
-                    ping_url = f"{self.settings['bridge_url']}/ping"
+                    # Try to ping the metadata worker
+                    ping_url = f"{self.settings['metadata_url']}/ping"
                     ping_req = Request(ping_url)
                     with urlopen(ping_req, timeout=2) as ping_response:
                         if ping_response.getcode() == 200:
-                            self.log(f"[Hydra+: ALBUM-META] ✓ Server back online after {attempt + 1}s")
+                            self.log(f"[Hydra+: ALBUM-META] ✓ Metadata worker back online after {attempt + 1}s")
                             time.sleep(2)  # Give server time to stabilize
 
                             # Check if file was already renamed before the crash
@@ -2527,12 +2543,12 @@ class Plugin(BasePlugin):
                 for attempt in range(max_wait):
                     time.sleep(1)
                     try:
-                        # Try to ping the server
-                        ping_url = f"{self.settings['bridge_url']}/ping"
+                        # Try to ping the metadata worker
+                        ping_url = f"{self.settings['metadata_url']}/ping"
                         ping_req = Request(ping_url)
                         with urlopen(ping_req, timeout=2) as ping_response:
                             if ping_response.getcode() == 200:
-                                self.log(f"[Hydra+: ALBUM-META] ✓ Server back online after {attempt + 1}s")
+                                self.log(f"[Hydra+: ALBUM-META] ✓ Metadata worker back online after {attempt + 1}s")
                                 time.sleep(2)  # Give server time to stabilize
 
                                 # Check if file was already renamed before the crash
@@ -2621,8 +2637,8 @@ class Plugin(BasePlugin):
 
             self.log(f"[Hydra+: ALBUM-META] Sending request to bridge server...")
 
-            # Send to Node server with shorter timeout to avoid blocking
-            url = f"{self.settings['bridge_url']}/process-metadata"
+            # Send to Metadata Worker with shorter timeout to avoid blocking
+            url = f"{self.settings['metadata_url']}/process-metadata"
             req = Request(url,
                          data=json.dumps(payload).encode('utf-8'),
                          headers={'Content-Type': 'application/json'})

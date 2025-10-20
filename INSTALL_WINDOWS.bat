@@ -189,7 +189,7 @@ echo  ========================================================================
 echo.
 echo  Progress: [################........] 80%%
 echo.
-echo  Installing npm packages (node-id3, flac-tagger)...
+echo  Installing npm packages (express, cors, node-id3, flac-tagger)...
 echo  This may take a moment...
 echo.
 
@@ -205,6 +205,16 @@ if exist "package.json" (
         echo  +-------------------------------------------------------------------+
         echo.
         echo  Verifying packages...
+        if exist "node_modules\express" (
+            echo  [√] express installed
+        ) else (
+            echo  [X] express MISSING
+        )
+        if exist "node_modules\cors" (
+            echo  [√] cors installed
+        ) else (
+            echo  [X] cors MISSING
+        )
         if exist "node_modules\node-id3" (
             echo  [√] node-id3 installed
         ) else (
