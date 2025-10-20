@@ -189,7 +189,7 @@
       background: #282828;
       border: 1px solid #404040;
       border-radius: 4px;
-      color: #ffffff;
+      color: #B9FF37;
       font-size: 12px;
       font-family: monospace;
       box-sizing: border-box;
@@ -429,6 +429,7 @@
       font-family: 'Courier New', monospace;
       font-size: 10px;
       line-height: 1.4;
+      overflow-y: auto;
     }
 
     /* Custom pill scrollbar for console */
@@ -489,21 +490,69 @@
       word-break: break-word;
     }
 
-    /* Event type colors */
-    .console-success .console-message {
+    /* Event type colors - track color takes precedence when available */
+    /* Fallback colors when no track color */
+    .console-success:not(.has-track-color) .console-message {
       color: #B9FF37;
     }
 
-    .console-error .console-message {
+    .console-error:not(.has-track-color) .console-message {
       color: #e22134;
     }
 
-    .console-warning .console-message {
+    .console-warning:not(.has-track-color) .console-message {
       color: #ffa500;
     }
 
-    .console-info .console-message {
+    .console-info:not(.has-track-color) .console-message {
       color: #6a9fb5;
+    }
+
+    /* Progress bar styles */
+    .console-entry.console-progress {
+      flex-direction: row;
+      align-items: flex-start;
+    }
+
+    .progress-container {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+      min-width: 0; /* Allow text truncation */
+    }
+
+    .progress-filename {
+      font-size: 10px;
+      color: #b3b3b3;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      font-weight: 500;
+    }
+
+    .progress-bar-bg {
+      width: 100%;
+      height: 8px;
+      background: #282828;
+      border-radius: 4px;
+      overflow: hidden;
+      border: 1px solid #1a1a1a;
+      box-shadow: inset 1px 1px 2px #000000;
+    }
+
+    .progress-bar-fill {
+      height: 100%;
+      background: #B9FF37;
+      border-radius: 3px;
+      transition: width 0.3s ease;
+      box-shadow: 0 0 4px currentColor;
+    }
+
+    .progress-text {
+      font-size: 9px;
+      color: #6a6a6a;
+      font-family: 'Courier New', monospace;
     }
 
   </style>
@@ -684,11 +733,11 @@ $$$$$$$ ` $$$$$$ ;$$$$;  $$$$l$$$$;  $$$$;   $$$$     $$$$;   $$$$$$~  :$$$$$$$$
 
         <!-- Available Tokens Reference -->
         <div class="description" style="margin-bottom: 12px;">
-          Available tokens: <br><span style="color: #B9FF37; font-family: monospace; font-size: 11px;">{artist}</span>,
-          <span style="color: #B9FF37; font-family: monospace; font-size: 11px;">{track}</span>,
-          <span style="color: #B9FF37; font-family: monospace; font-size: 11px;">{trackNum}</span>,
-          <span style="color: #B9FF37; font-family: monospace; font-size: 11px;">{album}</span>,
-          <span style="color: #B9FF37; font-family: monospace; font-size: 11px;">{year}</span>
+          Available tokens: <br><span style="color: #949494; font-family: monospace; font-size: 11px;">{artist}</span>,
+          <span style="color: #949494; font-family: monospace; font-size: 11px;">{track}</span>,
+          <span style="color: #949494; font-family: monospace; font-size: 11px;">{trackNum}</span>,
+          <span style="color: #949494; font-family: monospace; font-size: 11px;">{album}</span>,
+          <span style="color: #949494; font-family: monospace; font-size: 11px;">{year}</span>
         </div>
 
         <!-- Live Preview -->

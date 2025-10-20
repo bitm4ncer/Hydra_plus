@@ -87,6 +87,9 @@ class Plugin(BasePlugin):
         self.last_activity_time = time.time()
         self.current_poll_interval = 2  # Start with normal interval
         self.poll_mode = 'active'  # 'active', 'idle', or 'sleep'
+        # Progress monitoring
+        self.progress_thread = None  # Thread for monitoring download progress
+        self.progress_running = False  # Flag to control progress monitoring thread
 
         # Get plugin directory and server path
         self.plugin_dir = os.path.dirname(os.path.abspath(__file__))
@@ -337,6 +340,11 @@ class Plugin(BasePlugin):
         self.thread = Thread(target=self._poll_queue, daemon=True)
         self.thread.start()
 
+        # Start progress monitoring thread
+        self.progress_running = True
+        self.progress_thread = Thread(target=self._monitor_download_progress, daemon=True)
+        self.progress_thread.start()
+
         # Check if server is running and start if needed (in background to avoid blocking startup)
         server_thread = Thread(target=self._check_and_start_server, daemon=True)
         server_thread.start()
@@ -349,6 +357,11 @@ class Plugin(BasePlugin):
         self.running = False
         if self.thread and self.thread.is_alive():
             self.thread.join(timeout=5)
+
+        # Stop progress monitoring thread
+        self.progress_running = False
+        if self.progress_thread and self.progress_thread.is_alive():
+            self.progress_thread.join(timeout=5)
 
         # Stop server if we started it
         if self.server_process:
@@ -477,6 +490,16 @@ class Plugin(BasePlugin):
         auto_dl_status = "Auto Download enabled" if auto_download else "Auto Download disabled"
         format_status = f"Format: {format_preference.upper()}"
         self.log(f"[Hydra+] >> NEW SEARCH << {query} ({auto_dl_status}, {format_status})")
+
+        # Send event to bridge for popup console
+        if artist and track:
+            track_id_safe = track_id or f"{artist}{track}".replace(' ', '').replace('-', '')[:20]
+            event_msg = f"Searching: {artist} - {track}"
+        else:
+            track_id_safe = query.replace(' ', '').replace('-', '')[:20]
+            event_msg = f"Searching: {query}"
+        self._send_event_to_bridge('info', event_msg, track_id_safe)
+
         try:
             # Use the core.search.do_search method
             # Mode "global" = network-wide search
@@ -525,6 +548,136 @@ class Plugin(BasePlugin):
             import traceback
             self.log(f"[Hydra+] Traceback: {traceback.format_exc()}")
             return False
+
+    def _send_event_to_bridge(self, event_type, message, track_id=None):
+        """Send an event to the bridge server for popup console display.
+
+        Args:
+            event_type: Event type ('info', 'success', 'error', 'warning')
+            message: Event message
+            track_id: Optional track ID for color-coding
+        """
+        try:
+            import json
+            from urllib.request import Request, urlopen
+            from urllib.error import URLError
+
+            bridge_url = self.settings.get('bridge_url', 'http://127.0.0.1:3847')
+            url = f"{bridge_url}/event"
+
+            data = {
+                'type': event_type,
+                'message': message,
+                'trackId': track_id
+            }
+
+            req = Request(url,
+                         data=json.dumps(data).encode('utf-8'),
+                         headers={'Content-Type': 'application/json'},
+                         method='POST')
+
+            # Non-blocking - don't wait for response
+            urlopen(req, timeout=0.5)
+        except Exception:
+            # Silently fail - don't spam logs if bridge is offline
+            pass
+
+    def _send_progress_update(self, track_id, filename, progress, bytes_downloaded, total_bytes):
+        """Send download progress update to bridge server.
+
+        Args:
+            track_id: Track ID for color-coding
+            filename: Name of file being downloaded
+            progress: Progress percentage (0-100)
+            bytes_downloaded: Bytes downloaded so far
+            total_bytes: Total file size in bytes
+        """
+        try:
+            import json
+            from urllib.request import Request, urlopen
+            from urllib.error import URLError
+
+            bridge_url = self.settings.get('bridge_url', 'http://127.0.0.1:3847')
+            url = f"{bridge_url}/progress"
+
+            data = {
+                'trackId': track_id,
+                'filename': filename,
+                'progress': progress,
+                'bytesDownloaded': bytes_downloaded,
+                'totalBytes': total_bytes
+            }
+
+            req = Request(url,
+                         data=json.dumps(data).encode('utf-8'),
+                         headers={'Content-Type': 'application/json'},
+                         method='POST')
+
+            # Non-blocking - don't wait for response
+            urlopen(req, timeout=0.5)
+        except Exception:
+            # Silently fail - don't spam logs if bridge is offline
+            pass
+
+    def _monitor_download_progress(self):
+        """Background thread to monitor active download progress and send updates to bridge."""
+        import os
+
+        while self.progress_running:
+            try:
+                # Check if we have access to downloads
+                if not hasattr(self.core, 'downloads') or not hasattr(self.core.downloads, 'transfers'):
+                    time.sleep(2)
+                    continue
+
+                # Get all active transfers
+                transfers = self.core.downloads.transfers
+
+                for virtual_path, transfer in transfers.items():
+                    try:
+                        # Skip if transfer doesn't have required attributes
+                        if not hasattr(transfer, 'size') or not hasattr(transfer, 'current_byte_offset'):
+                            continue
+
+                        # Get progress data
+                        total_bytes = transfer.size
+                        bytes_downloaded = transfer.current_byte_offset or 0
+
+                        # Skip if no valid size or progress
+                        if total_bytes is None or total_bytes <= 0:
+                            continue
+
+                        # Calculate progress percentage
+                        progress = min(100, (bytes_downloaded / total_bytes) * 100)
+
+                        # Get filename from virtual path
+                        filename = os.path.basename(virtual_path)
+
+                        # Try to find track ID from active_downloads
+                        track_id = None
+                        if virtual_path in self.active_downloads:
+                            search_token = self.active_downloads[virtual_path]
+                            if search_token in self.active_searches:
+                                search_info = self.active_searches[search_token]
+                                track_id = search_info.get('track_id', '') or f"{search_info.get('artist', '')}-{search_info.get('track', '')}".replace(' ', '')[:20]
+
+                        # Fallback: generate track ID from filename
+                        if not track_id:
+                            track_id = filename.replace(' ', '').replace('-', '')[:20]
+
+                        # Send progress update to bridge
+                        self._send_progress_update(track_id, filename, progress, bytes_downloaded, total_bytes)
+
+                    except Exception as e:
+                        # Skip this transfer if there's an error
+                        continue
+
+            except Exception as e:
+                # Log error but don't crash the thread
+                pass
+
+            # Sleep for 1.5 seconds before next update
+            time.sleep(1.5)
 
     def _get_file_format(self, filename):
         """Extract format from file extension."""
@@ -746,6 +899,10 @@ class Plugin(BasePlugin):
         if search_info['result_count'] == 0:
             self.log(f"[Hydra+: DL] 📥 Receiving results for '{search_info['query']}'")
 
+            # Send event to bridge for popup console
+            track_id_safe = search_info.get('track_id', '') or f"{search_info.get('artist', '')}-{search_info.get('track', '')}".replace(' ', '')[:20]
+            self._send_event_to_bridge('info', f"Receiving results for: {search_info.get('artist', '')} - {search_info.get('track', '')}", track_id_safe)
+
         # Process each file in the results
         for file_data in file_list:
             # Extract file information from the result
@@ -801,6 +958,10 @@ class Plugin(BasePlugin):
                     format_info += " (fallback)"
 
                 self.log(f"[Hydra+: DL] ★ BEST MATCH → {file_name}{bitrate_info}{format_info} (score: {int(score)})")
+
+                # Send event to bridge for popup console
+                track_id_safe = search_info.get('track_id', '') or f"{search_info.get('artist', '')}-{search_info.get('track', '')}".replace(' ', '')[:20]
+                self._send_event_to_bridge('info', f"Best match: {file_name}{bitrate_info}{format_info} (score: {int(score)})", track_id_safe)
 
         # Increment result count
         search_info['result_count'] += len(file_list)
@@ -1012,7 +1173,14 @@ class Plugin(BasePlugin):
 
             candidate = candidates[attempt_index]
 
-            self.log(f"[Hydra+: DL] ⬇ HEAD #1 → {candidate['file']} (score: {int(candidate['score'])})")
+            self.log(f"[Hydra+: DL] ⬇ HEAD #{attempt_index + 1} → {candidate['file']} (score: {int(candidate['score'])})")
+
+            # Send event to bridge for popup console
+            track_id_safe = search_info.get('track_id', '') or f"{search_info.get('artist', '')}-{search_info.get('track', '')}".replace(' ', '')[:20]
+            format_info = self._get_file_format(candidate['file']).upper()
+            bitrate_info = self._extract_bitrate(candidate['file']) or ''
+            quality_str = f"{format_info} {bitrate_info}".strip()
+            self._send_event_to_bridge('info', f"Downloading: {search_info.get('artist', '')} - {search_info.get('track', '')} ({quality_str})", track_id_safe)
 
             # Queue the download
             self.core.downloads.enqueue_download(
@@ -1060,6 +1228,10 @@ class Plugin(BasePlugin):
 
         self.log(f"[Hydra+: DL] 🔄 Attempting fallback (reason: {reason})")
         self.log(f"[Hydra+: DL] Last download path: {search_info.get('last_download_path', 'NONE')}")
+
+        # Send event to bridge for popup console
+        track_id_safe = search_info.get('track_id', '') or f"{search_info.get('artist', '')}-{search_info.get('track', '')}".replace(' ', '')[:20]
+        self._send_event_to_bridge('warning', f"Retrying: {search_info.get('artist', '')} - {search_info.get('track', '')} ({reason})", track_id_safe)
 
         # Remove failed download from tracking and abort it from Nicotine+ queue
         if search_info.get('last_download_path') and search_info['last_download_path'] in self.active_downloads:
@@ -1583,6 +1755,11 @@ class Plugin(BasePlugin):
 
             self.log(f"[Hydra+: ALBUM] ⬇ Track {current_index + 1}/{len(tracks_to_download)}: {track_info['artist']} - {track_info['track']}")
 
+            # Send event to bridge for popup console
+            track_id_safe = track_info.get('track_id', '') or f"{track_info['artist']}{track_info['track']}".replace(' ', '').replace('-', '')[:20]
+            album_info = f" (Album: {search_info.get('album_name', '')})" if search_info.get('album_name') else ''
+            self._send_event_to_bridge('info', f"Downloading: {track_info['artist']} - {track_info['track']}{album_info}", track_id_safe)
+
             # Queue the download
             self.core.downloads.enqueue_download(
                 username=track_to_download['user'],
@@ -1824,6 +2001,12 @@ class Plugin(BasePlugin):
             if not search_info.get('auto_download', False):
                 return
 
+            # Send event to bridge for popup console
+            track_id_safe = search_info.get('track_id', '') or f"{search_info.get('artist', '')}-{search_info.get('track', '')}".replace(' ', '')[:20]
+            import os
+            filename = os.path.basename(real_path)
+            self._send_event_to_bridge('success', f"Downloaded: {filename}", track_id_safe)
+
             search_type = search_info.get('type', 'track')
 
             if search_type == 'album':
@@ -1843,6 +2026,12 @@ class Plugin(BasePlugin):
         # Debug: Log the paths we received
         self.log(f"[Hydra+: META] Download complete - virtual_path: {virtual_path}")
         self.log(f"[Hydra+: META] Download complete - real_path: {real_path}")
+
+        # Send event to bridge for popup console
+        import os
+        filename = os.path.basename(real_path)
+        track_id_safe = search_info.get('track_id', '') or f"{search_info.get('artist', '')}-{search_info.get('track', '')}".replace(' ', '')[:20]
+        self._send_event_to_bridge('success', f"Download complete: {filename}", track_id_safe)
 
         # Process metadata in background thread to avoid blocking
         from threading import Thread

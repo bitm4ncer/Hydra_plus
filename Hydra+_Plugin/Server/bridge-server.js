@@ -94,6 +94,11 @@ const EVENT_MAX_AGE = 60 * 60 * 1000; // 1 hour TTL for events
 let eventIdCounter = 0;
 const events = [];
 
+// Active download progress tracking
+// Key: trackId, Value: {filename, progress, bytesDownloaded, totalBytes, lastUpdate}
+const activeDownloads = new Map();
+const PROGRESS_MAX_AGE = 10 * 60 * 1000; // 10 minutes TTL for stale progress entries
+
 // IMPROVED: Helper to track timeouts for cleanup
 function createTrackedTimeout(callback, delay) {
   const timeoutId = setTimeout(() => {
@@ -155,6 +160,45 @@ function addEvent(type, message, trackId = null) {
   }
 
   return event;
+}
+
+// Cleanup stale progress entries
+function cleanupStaleProgress() {
+  const now = Date.now();
+  const cutoffTime = now - PROGRESS_MAX_AGE;
+
+  let removed = 0;
+  for (const [trackId, progressData] of activeDownloads.entries()) {
+    if (progressData.lastUpdate < cutoffTime) {
+      activeDownloads.delete(trackId);
+      removed++;
+    }
+  }
+
+  if (removed > 0) {
+    console.log(`[Hydra+: PROGRESS] Cleaned up ${removed} stale progress entries`);
+  }
+}
+
+// Update or add download progress
+function updateDownloadProgress(trackId, filename, progress, bytesDownloaded, totalBytes) {
+  activeDownloads.set(trackId, {
+    filename,
+    progress,
+    bytesDownloaded,
+    totalBytes,
+    lastUpdate: Date.now()
+  });
+
+  // Periodically cleanup stale entries (every 50 updates)
+  if (activeDownloads.size > 0 && activeDownloads.size % 50 === 0) {
+    cleanupStaleProgress();
+  }
+}
+
+// Remove completed download from progress tracking
+function removeDownloadProgress(trackId) {
+  activeDownloads.delete(trackId);
 }
 
 // IMPROVED: LRU cache management for cover art
@@ -516,6 +560,12 @@ const server = http.createServer((req, res) => {
       const memUsage = process.memoryUsage();
       const uptimeSeconds = Math.floor((Date.now() - healthMetrics.startTime) / 1000);
 
+      // Convert activeDownloads Map to object for JSON serialization
+      const activeDownloadsObj = {};
+      for (const [trackId, progressData] of activeDownloads.entries()) {
+        activeDownloadsObj[trackId] = progressData;
+      }
+
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({
         status: 'running',
@@ -524,6 +574,7 @@ const server = http.createServer((req, res) => {
         unprocessed: queue.searches.filter(s => !s.processed).length,
         processing: activeProcessingCount, // Number of tracks currently being processed
         events: events, // Recent events for popup console
+        activeDownloads: activeDownloadsObj, // Active download progress for popup
         health: {
           memory: {
             heapUsedMB: Math.round(memUsage.heapUsed / 1024 / 1024),
@@ -737,6 +788,62 @@ const server = http.createServer((req, res) => {
           res.writeHead(400, { 'Content-Type': 'application/json' });
           res.end(JSON.stringify({ success: false, error: 'Invalid JSON' }));
         }
+      }
+    });
+
+    return;
+  }
+
+  // Handle POST to /event - Receive event from Python plugin
+  if (req.method === 'POST' && req.url === '/event') {
+    let body = '';
+
+    req.on('data', chunk => {
+      body += chunk.toString();
+    });
+
+    req.on('end', () => {
+      try {
+        const data = JSON.parse(body);
+        const { type, message, trackId } = data;
+
+        // Add event to tracking
+        addEvent(type || 'info', message, trackId);
+
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: true }));
+      } catch (error) {
+        console.error('[Hydra+: EVENT] ✗ Error:', error);
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: false, error: 'Invalid JSON' }));
+      }
+    });
+
+    return;
+  }
+
+  // Handle POST to /progress - Receive download progress update from Python plugin
+  if (req.method === 'POST' && req.url === '/progress') {
+    let body = '';
+
+    req.on('data', chunk => {
+      body += chunk.toString();
+    });
+
+    req.on('end', () => {
+      try {
+        const data = JSON.parse(body);
+        const { trackId, filename, progress, bytesDownloaded, totalBytes } = data;
+
+        // Update active download progress
+        updateDownloadProgress(trackId, filename, progress, bytesDownloaded, totalBytes);
+
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: true }));
+      } catch (error) {
+        console.error('[Hydra+: PROGRESS] ✗ Error:', error);
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: false, error: 'Invalid JSON' }));
       }
     });
 
@@ -1233,7 +1340,7 @@ async function fetchSpotifyMetadata(trackId) {
 }
 
 // IMPROVED: Download cover art with LRU cache management
-async function downloadCoverArt(imageUrl) {
+async function downloadCoverArt(imageUrl, trackId = null) {
   return new Promise((resolve) => {
     if (!imageUrl) {
       resolve(null);
@@ -1259,7 +1366,7 @@ async function downloadCoverArt(imageUrl) {
 
     healthMetrics.cacheMisses++;
     console.log(`[Hydra+: META] ⬇ Downloading cover...`);
-    addEvent('info', 'Downloading cover art from Spotify');
+    addEvent('info', 'Downloading cover art from Spotify', trackId);
 
     // Set timeout to prevent hanging - 30s for slower connections
     const timeout = createTrackedTimeout(() => {
@@ -1458,7 +1565,7 @@ async function processMetadata(data, res) {
           // Step 4: Download cover art
           let coverData = null;
           try {
-            coverData = await downloadCoverArt(spotifyMeta.imageUrl);
+            coverData = await downloadCoverArt(spotifyMeta.imageUrl, popupTrackId);
           } catch (coverError) {
             console.error(`[Hydra+: META] ✗ Cover download error: ${coverError.message}`);
             coverData = null;
@@ -1605,9 +1712,15 @@ async function processMetadata(data, res) {
 
             // Add success event for popup console with trackId
             addEvent('success', `Complete: ${artist} - ${track}`, popupTrackId);
+
+            // Remove from active downloads progress tracking
+            removeDownloadProgress(popupTrackId);
           } else {
             console.error(`[Hydra+: META] ✗ Metadata write failed`);
             addEvent('warning', `Metadata write failed: ${artist} - ${track}`, popupTrackId);
+
+            // Remove from active downloads progress tracking even if metadata write failed
+            removeDownloadProgress(popupTrackId);
           }
         } catch (bgError) {
           // Catch any errors in background processing to prevent server crash

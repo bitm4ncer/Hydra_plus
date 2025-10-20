@@ -1,4 +1,96 @@
 const BRIDGE_URL = 'http://127.0.0.1:3847';
+const POLL_INTERVAL = 3000; // Poll every 3 seconds
+
+let lastEventId = 0;
+let pollInterval = null;
+
+// Load last event ID from storage
+chrome.storage.local.get(['lastEventId'], (data) => {
+  if (data.lastEventId) {
+    lastEventId = data.lastEventId;
+  }
+});
+
+// Poll bridge server for events in background
+async function pollEvents() {
+  try {
+    const response = await fetch(`${BRIDGE_URL}/status`, {
+      method: 'GET',
+      mode: 'cors'
+    });
+
+    if (response.ok) {
+      const data = await response.json();
+
+      // Process events if provided by server
+      if (data.events && Array.isArray(data.events)) {
+        // Filter out events we've already seen
+        const newEvents = data.events.filter(event => event.id > lastEventId);
+
+        if (newEvents.length > 0) {
+          // Update last event ID
+          newEvents.forEach(event => {
+            if (event.id > lastEventId) {
+              lastEventId = event.id;
+            }
+          });
+
+          // Store last event ID
+          chrome.storage.local.set({ lastEventId: lastEventId });
+
+          // Load existing console events from storage
+          chrome.storage.local.get(['consoleEvents'], (storageData) => {
+            let consoleEvents = storageData.consoleEvents || [];
+
+            // Add new events to console
+            newEvents.forEach(event => {
+              const time = event.timestamp ? new Date(event.timestamp) : new Date();
+              const timeStr = time.toLocaleTimeString('en-US', { hour12: false });
+
+              consoleEvents.push({
+                type: event.type || 'info',
+                message: event.message,
+                time: timeStr,
+                timestamp: time,
+                trackId: event.trackId
+              });
+            });
+
+            // Keep only last 50 events
+            const MAX_CONSOLE_ENTRIES = 50;
+            if (consoleEvents.length > MAX_CONSOLE_ENTRIES) {
+              consoleEvents = consoleEvents.slice(-MAX_CONSOLE_ENTRIES);
+            }
+
+            // Save back to storage
+            chrome.storage.local.set({ consoleEvents: consoleEvents });
+          });
+        }
+      }
+
+      // Process active downloads progress if provided by server
+      if (data.activeDownloads) {
+        // Store active downloads progress in storage
+        chrome.storage.local.set({ activeDownloads: data.activeDownloads });
+      }
+    }
+  } catch (error) {
+    // Silently fail if server is offline
+  }
+}
+
+// Start polling when extension loads
+function startPolling() {
+  if (pollInterval) {
+    clearInterval(pollInterval);
+  }
+  pollInterval = setInterval(pollEvents, POLL_INTERVAL);
+  // Poll immediately on start
+  pollEvents();
+}
+
+// Start polling
+startPolling();
 
 // Create context menu when extension is installed
 chrome.runtime.onInstalled.addListener(() => {

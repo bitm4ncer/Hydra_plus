@@ -38,6 +38,47 @@ const toggleFileNamingBtn = document.getElementById('toggleFileNamingBtn');
 const MAX_CONSOLE_ENTRIES = 50;
 let consoleEvents = [];
 
+// Helper to safely call chrome.storage (handles extension context invalidation)
+function safeStorageSet(data, callback) {
+  try {
+    chrome.storage.local.set(data, () => {
+      if (chrome.runtime.lastError) {
+        // Extension context invalidated - ignore
+        if (!chrome.runtime.lastError.message.includes('Extension context invalidated')) {
+          console.error('Storage error:', chrome.runtime.lastError);
+        }
+      } else if (callback) {
+        callback();
+      }
+    });
+  } catch (error) {
+    // Extension context invalidated - ignore silently
+    if (!error.message.includes('Extension context invalidated')) {
+      console.error('Storage error:', error);
+    }
+  }
+}
+
+function safeStorageSyncSet(data, callback) {
+  try {
+    chrome.storage.sync.set(data, () => {
+      if (chrome.runtime.lastError) {
+        // Extension context invalidated - ignore
+        if (!chrome.runtime.lastError.message.includes('Extension context invalidated')) {
+          console.error('Storage error:', chrome.runtime.lastError);
+        }
+      } else if (callback) {
+        callback();
+      }
+    });
+  } catch (error) {
+    // Extension context invalidated - ignore silently
+    if (!error.message.includes('Extension context invalidated')) {
+      console.error('Storage error:', error);
+    }
+  }
+}
+
 // Track color assignments for concurrent tracks
 const trackColors = ['#B9FF37', '#6a9fb5', '#ffa500', '#ff6ec7', '#7fff00', '#00bfff', '#ff4500', '#9370db'];
 let trackColorMap = new Map(); // trackId -> color
@@ -76,16 +117,17 @@ function addConsoleEvent(type, message, timestamp = null, trackId = null) {
 
   // Add to DOM
   const entry = document.createElement('div');
-  entry.className = `console-entry console-${type}`;
 
-  // Add track color indicator if trackId provided
+  // Add track color if trackId provided
   const trackColor = getTrackColor(trackId);
-  const colorDot = trackColor ? `<span class="track-color-dot" style="background-color: ${trackColor};"></span>` : '';
+  const messageStyle = trackColor ? ` style="color: ${trackColor};"` : '';
+  const hasColorClass = trackColor ? ' has-track-color' : '';
+
+  entry.className = `console-entry console-${type}${hasColorClass}`;
 
   entry.innerHTML = `
     <span class="console-time">${timeStr}</span>
-    ${colorDot}
-    <span class="console-message">${message}</span>
+    <span class="console-message"${messageStyle}>${message}</span>
   `;
 
   consoleContent.appendChild(entry);
@@ -98,8 +140,8 @@ function addConsoleEvent(type, message, timestamp = null, trackId = null) {
   // Auto-scroll to bottom
   consoleContent.scrollTop = consoleContent.scrollHeight;
 
-  // Store in chrome.storage.local for persistence
-  chrome.storage.local.set({ consoleEvents: consoleEvents });
+  // Store in chrome.storage.local for persistence (with error handling)
+  safeStorageSet({ consoleEvents: consoleEvents });
 }
 
 // Load console events from storage
@@ -114,16 +156,17 @@ function loadConsoleEvents() {
       // Render events
       consoleEvents.forEach(event => {
         const entry = document.createElement('div');
-        entry.className = `console-entry console-${event.type}`;
 
-        // Add track color indicator if trackId exists
+        // Add track color if trackId exists
         const trackColor = getTrackColor(event.trackId);
-        const colorDot = trackColor ? `<span class="track-color-dot" style="background-color: ${trackColor};"></span>` : '';
+        const messageStyle = trackColor ? ` style="color: ${trackColor};"` : '';
+        const hasColorClass = trackColor ? ' has-track-color' : '';
+
+        entry.className = `console-entry console-${event.type}${hasColorClass}`;
 
         entry.innerHTML = `
           <span class="console-time">${event.time}</span>
-          ${colorDot}
-          <span class="console-message">${event.message}</span>
+          <span class="console-message"${messageStyle}>${event.message}</span>
         `;
         consoleContent.appendChild(entry);
       });
@@ -147,7 +190,7 @@ clearConsoleBtn.addEventListener('click', () => {
   consoleContent.innerHTML = '<div class="console-entry console-info"><span class="console-time">--:--:--</span><span class="console-message">Console cleared</span></div>';
 
   // Clear storage
-  chrome.storage.local.set({ consoleEvents: [] });
+  safeStorageSet({ consoleEvents: [] });
 
   // Add a brief confirmation message that will be replaced by next event
   setTimeout(() => {
@@ -168,7 +211,7 @@ toggleConsoleBtn.addEventListener('click', () => {
   }
 
   // Save preference
-  chrome.storage.local.set({ consoleCollapsed: isCollapsed });
+  safeStorageSet({ consoleCollapsed: isCollapsed });
 });
 
 // Load console collapse state
@@ -193,7 +236,7 @@ toggleFileNamingBtn.addEventListener('click', () => {
   }
 
   // Save preference
-  chrome.storage.local.set({ fileNamingCollapsed: isCollapsed });
+  safeStorageSet({ fileNamingCollapsed: isCollapsed });
 });
 
 // Load file naming collapse state
@@ -208,6 +251,78 @@ chrome.storage.local.get(['fileNamingCollapsed'], (data) => {
 // Load console events on popup open
 loadConsoleEvents();
 
+// Load and display active download progress bars
+function loadActiveDownloads() {
+  chrome.storage.local.get(['activeDownloads'], (data) => {
+    if (data.activeDownloads && Object.keys(data.activeDownloads).length > 0) {
+      updateProgressBars(data.activeDownloads);
+    } else {
+      // Clear any existing progress bars if no active downloads
+      clearProgressBars();
+    }
+  });
+}
+
+// Update progress bars in the console
+function updateProgressBars(activeDownloads) {
+  // Remove all existing progress bars first
+  const existingBars = consoleContent.querySelectorAll('.console-entry.console-progress');
+  existingBars.forEach(bar => bar.remove());
+
+  // Add progress bar for each active download
+  for (const [trackId, progressData] of Object.entries(activeDownloads)) {
+    const { filename, progress, bytesDownloaded, totalBytes } = progressData;
+
+    // Create progress bar entry
+    const entry = document.createElement('div');
+    entry.className = 'console-entry console-progress';
+    entry.setAttribute('data-track-id', trackId);
+
+    // Get track color
+    const trackColor = getTrackColor(trackId);
+    const colorDot = trackColor ? `<span class="track-color-dot" style="background-color: ${trackColor};"></span>` : '';
+
+    // Format bytes to MB
+    const mbDownloaded = (bytesDownloaded / 1024 / 1024).toFixed(1);
+    const mbTotal = (totalBytes / 1024 / 1024).toFixed(1);
+
+    // Truncate long filenames
+    const displayFilename = filename.length > 30 ? filename.substring(0, 27) + '...' : filename;
+
+    entry.innerHTML = `
+      <span class="console-time">${new Date().toLocaleTimeString('en-US', { hour12: false })}</span>
+      ${colorDot}
+      <div class="progress-container">
+        <div class="progress-filename" title="${filename}">${displayFilename}</div>
+        <div class="progress-bar-bg">
+          <div class="progress-bar-fill" style="width: ${progress}%; background-color: ${trackColor || '#B9FF37'};"></div>
+        </div>
+        <div class="progress-text">${mbDownloaded} MB / ${mbTotal} MB (${Math.round(progress)}%)</div>
+      </div>
+    `;
+
+    // Insert progress bars at the end of console (before regular events)
+    consoleContent.appendChild(entry);
+  }
+
+  // Auto-scroll to bottom
+  consoleContent.scrollTop = consoleContent.scrollHeight;
+}
+
+// Clear all progress bars
+function clearProgressBars() {
+  const existingBars = consoleContent.querySelectorAll('.console-entry.console-progress');
+  existingBars.forEach(bar => bar.remove());
+}
+
+// Load active downloads on popup open
+loadActiveDownloads();
+
+// Poll for progress updates every 2 seconds
+setInterval(() => {
+  loadActiveDownloads();
+}, 2000);
+
 // Demo mode: Simulate events for testing (remove this in production)
 // This demonstrates different event types when server doesn't provide events yet
 window.addEventListener('load', () => {
@@ -215,7 +330,7 @@ window.addEventListener('load', () => {
   chrome.storage.local.get(['hasShownDemo', 'consoleEvents'], (data) => {
     if (!data.hasShownDemo && (!data.consoleEvents || data.consoleEvents.length === 0)) {
       // Mark demo as shown
-      chrome.storage.local.set({ hasShownDemo: true });
+      safeStorageSet({ hasShownDemo: true });
 
       // Show sample events with delay
       setTimeout(() => {
@@ -314,7 +429,7 @@ async function loadSettings() {
           const isConnected = await testSpotifyConnection(data.spotifyClientId, data.spotifyClientSecret);
           if (isConnected !== data.spotifyApiConnected) {
             // Update stored state if it changed
-            chrome.storage.sync.set({ spotifyApiConnected: isConnected });
+            safeStorageSyncSet({ spotifyApiConnected: isConnected });
 
             // Update UI if state changed
             if (isConnected) {
@@ -366,7 +481,7 @@ loadSettings();
 // Save settings when toggles change
 autoDownloadToggle.addEventListener('change', () => {
   const autoDownload = autoDownloadToggle.checked;
-  chrome.storage.sync.set({ autoDownload }, () => {
+  safeStorageSyncSet({ autoDownload }, () => {
     console.log('Auto-download setting saved:', autoDownload);
   });
   // Update visibility of format preference and metadata sections
@@ -381,7 +496,7 @@ formatPreferenceToggle.addEventListener('change', () => {
     checked: formatPreferenceToggle.checked,
     formatPreference: formatPreference
   });
-  chrome.storage.sync.set({ formatPreference }, () => {
+  safeStorageSyncSet({ formatPreference }, () => {
     console.log('[Hydra+] Format preference saved to storage:', formatPreference);
     // Verify it was saved
     chrome.storage.sync.get(['formatPreference'], (result) => {
@@ -393,7 +508,7 @@ formatPreferenceToggle.addEventListener('change', () => {
 
 metadataOverrideToggle.addEventListener('change', () => {
   const metadataOverride = metadataOverrideToggle.checked;
-  chrome.storage.sync.set({ metadataOverride }, () => {
+  safeStorageSyncSet({ metadataOverride }, () => {
     console.log('Metadata override setting saved:', metadataOverride);
   });
   updateCredentialsSectionVisibility();
@@ -445,13 +560,8 @@ async function checkServerStatus() {
 
       // Process events if provided by server
       if (data.events && Array.isArray(data.events)) {
-        // Debug: Log total events received from server
-        console.log('[Hydra+ Popup] Received', data.events.length, 'events from server, lastEventId:', lastEventId);
-
         // Filter out events we've already seen
         const newEvents = data.events.filter(event => event.id > lastEventId);
-
-        console.log('[Hydra+ Popup] Processing', newEvents.length, 'new events');
 
         newEvents.forEach(event => {
           // Update last event ID
@@ -464,7 +574,7 @@ async function checkServerStatus() {
         });
 
         // Store last event ID
-        chrome.storage.local.set({ lastEventId: lastEventId });
+        safeStorageSet({ lastEventId: lastEventId });
       }
     } else {
       throw new Error('Server returned error');
@@ -499,7 +609,7 @@ function autoSaveCredentials() {
     const clientSecret = spotifyClientSecret.value.trim();
 
     // Save to storage
-    chrome.storage.sync.set({
+    safeStorageSyncSet({
       spotifyClientId: clientId,
       spotifyClientSecret: clientSecret
     }, () => {
@@ -557,7 +667,7 @@ saveCredentialsBtn.addEventListener('click', async () => {
 
   if (isConnected) {
     // Save to storage
-    chrome.storage.sync.set({
+    safeStorageSyncSet({
       spotifyClientId: clientId,
       spotifyClientSecret: clientSecret,
       spotifyApiConnected: true
@@ -584,7 +694,7 @@ saveCredentialsBtn.addEventListener('click', async () => {
     });
   } else {
     // Save failed state to prevent flash on next popup open
-    chrome.storage.sync.set({
+    safeStorageSyncSet({
       spotifyApiConnected: false
     });
 
@@ -918,7 +1028,7 @@ function savePatterns() {
     const singlePattern = singleTrackPattern.value.trim() || '{artist} - {track}';
     const albumPattern = albumTrackPattern.value.trim() || '{trackNum} {artist} - {track}';
 
-    chrome.storage.sync.set({
+    safeStorageSyncSet({
       singleTrackPattern: singlePattern,
       albumTrackPattern: albumPattern
     }, () => {
