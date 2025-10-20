@@ -101,7 +101,53 @@
 }
 
 .spotify-album-nicotine-btn svg {
-  width: 20px;
-  height: 20px;
+  width: 30px!important;
+  height: 30px!important;
   pointer-events: none;
+}
+
+/* Style img elements for Hydra+ icon */
+.spotify-track-nicotine-btn img,
+.spotify-album-nicotine-btn img {
+  transition: filter 0.2s ease;
+}
+
+/* Default state - gray color */
+.spotify-track-nicotine-btn img {
+  filter: brightness(0) saturate(100%) invert(72%) sepia(5%) saturate(0%) hue-rotate(0deg) brightness(92%) contrast(88%);
+}
+
+/* Hover state - white color */
+.spotify-track-nicotine-btn:hover img {
+  filter: brightness(0) saturate(100%) invert(100%) sepia(0%) saturate(0%) hue-rotate(0deg) brightness(100%) contrast(100%);
+}
+
+/* Success state - Hydra+ green (#B9FF37) */
+.spotify-track-nicotine-btn.sent img {
+  filter: brightness(0) saturate(100%) invert(91%) sepia(18%) saturate(1677%) hue-rotate(24deg) brightness(103%) contrast(102%);
+}
+
+/* Error state - red (#e22134) */
+.spotify-track-nicotine-btn.error img {
+  filter: brightness(0) saturate(100%) invert(17%) sepia(97%) saturate(4186%) hue-rotate(347deg) brightness(88%) contrast(98%);
+}
+
+/* Album button - default Hydra+ green */
+.spotify-album-nicotine-btn img {
+  filter: brightness(0) saturate(100%) invert(91%) sepia(18%) saturate(1677%) hue-rotate(24deg) brightness(103%) contrast(102%);
+}
+
+/* Album button hover - lighter green (#c7ff5a) */
+.spotify-album-nicotine-btn:hover img {
+  filter: brightness(0) saturate(100%) invert(94%) sepia(14%) saturate(1860%) hue-rotate(24deg) brightness(105%) contrast(101%);
+}
+
+/* Album button success state */
+.spotify-album-nicotine-btn.sent img {
+  filter: brightness(0) saturate(100%) invert(91%) sepia(18%) saturate(1677%) hue-rotate(24deg) brightness(103%) contrast(102%);
+}
+
+/* Album button error state */
+.spotify-album-nicotine-btn.error img {
+  filter: brightness(0) saturate(100%) invert(17%) sepia(97%) saturate(4186%) hue-rotate(347deg) brightness(88%) contrast(98%);
 }

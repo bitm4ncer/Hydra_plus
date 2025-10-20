@@ -39,5 +39,11 @@
       "css": ["styles.css"],
       "run_at": "document_idle"
     }
+  ],
+  "web_accessible_resources": [
+    {
+      "resources": ["assets/Hydra_Icon.svg"],
+      "matches": ["https://open.spotify.com/*"]
+    }
   ]
 }

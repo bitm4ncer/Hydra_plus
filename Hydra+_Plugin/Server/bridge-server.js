@@ -63,6 +63,30 @@ const coverArtCache = new Map();
 // Note: Album batch processing is handled via sequential metadata queue processing
 // which naturally prevents concurrent issues by processing one track at a time
 
+// Event tracking for popup console
+const MAX_EVENTS = 100; // Keep last 100 events
+let eventIdCounter = 0;
+const events = [];
+
+// Add event to tracking (for popup console)
+function addEvent(type, message) {
+  const event = {
+    id: ++eventIdCounter,
+    type: type, // 'info', 'success', 'error', 'warning'
+    message: message,
+    timestamp: new Date().toISOString()
+  };
+
+  events.push(event);
+
+  // Keep only last MAX_EVENTS
+  if (events.length > MAX_EVENTS) {
+    events.shift();
+  }
+
+  return event;
+}
+
 // Spotify API credentials (optional, set via extension popup)
 let spotifyCredentials = {
   clientId: null,
@@ -209,12 +233,17 @@ const server = http.createServer((req, res) => {
         const success = addToQueue(searchData);
 
         if (success) {
+          // Add event for popup console
+          addEvent('success', `Track queued: ${searchData.artist} - ${searchData.track}`);
+
           res.writeHead(200, { 'Content-Type': 'application/json' });
           res.end(JSON.stringify({
             success: true,
             message: 'Search added to queue'
           }));
         } else {
+          addEvent('error', `Failed to queue track: ${searchData.artist} - ${searchData.track}`);
+
           res.writeHead(500, { 'Content-Type': 'application/json' });
           res.end(JSON.stringify({
             error: 'Failed to add to queue'
@@ -278,6 +307,9 @@ const server = http.createServer((req, res) => {
         const success = addToQueue(albumSearchData);
 
         if (success) {
+          // Add event for popup console
+          addEvent('success', `Album queued: ${data.album_artist} - ${data.album_name} (${data.tracks.length} tracks)`);
+
           res.writeHead(200, { 'Content-Type': 'application/json' });
           res.end(JSON.stringify({
             success: true,
@@ -285,6 +317,8 @@ const server = http.createServer((req, res) => {
           }));
           console.log(`[Hydra+: ALBUM] ✓ QUEUED → ${data.album_artist} - ${data.album_name} (${data.tracks.length} tracks)`);
         } else {
+          addEvent('error', `Failed to queue album: ${data.album_artist} - ${data.album_name}`);
+
           res.writeHead(500, { 'Content-Type': 'application/json' });
           res.end(JSON.stringify({
             error: 'Failed to add album to queue'
@@ -317,14 +351,16 @@ const server = http.createServer((req, res) => {
       res.end(JSON.stringify({
         status: 'running',
         queueSize: queue.searches.length,
-        unprocessed: queue.searches.filter(s => !s.processed).length
+        unprocessed: queue.searches.filter(s => !s.processed).length,
+        events: events // Include recent events for popup console
       }));
     } catch (error) {
       console.error('[Hydra+: ERROR] Status endpoint error:', error.message);
       res.writeHead(500, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({
         error: 'Failed to read queue',
-        details: error.message
+        details: error.message,
+        events: events // Include events even on error
       }));
     }
     return;
@@ -981,6 +1017,7 @@ async function downloadCoverArt(imageUrl) {
     }
 
     console.log(`[Hydra+: META] ⬇ Downloading cover...`);
+    addEvent('info', 'Downloading cover art from Spotify');
 
     // Set timeout to prevent hanging - increased to 30s for slower connections
     const timeout = setTimeout(() => {
@@ -1034,6 +1071,9 @@ async function processMetadata(data, res) {
 
   console.log(`[Hydra+: META] >> PROCESSING << ${path.basename(file_path)}`);
 
+  // Add event for popup console
+  addEvent('info', `Processing metadata: ${artist} - ${track}`);
+
   const result = {
     success: true,
     original_path: file_path,
@@ -1051,6 +1091,7 @@ async function processMetadata(data, res) {
   try {
     // Check if file exists
     if (!fs.existsSync(file_path)) {
+      addEvent('error', `File not found: ${path.basename(file_path)}`);
       throw new Error('File not found');
     }
 
@@ -1310,8 +1351,12 @@ async function processMetadata(data, res) {
             if (apiMeta.genre) console.log(`[Hydra+: META]   Genre: ${apiMeta.genre}`);
             if (apiMeta.label) console.log(`[Hydra+: META]   Label: ${apiMeta.label}`);
             if (coverData) console.log(`[Hydra+: META]   Cover: embedded`);
+
+            // Add success event for popup console
+            addEvent('success', `Metadata complete: ${artist} - ${track}`);
           } else {
             console.error(`[Hydra+: META] ✗ Metadata write failed`);
+            addEvent('warning', `Metadata write failed: ${artist} - ${track}`);
           }
         } catch (bgError) {
           // Catch any errors in background processing to prevent server crash
@@ -1379,6 +1424,7 @@ async function ensureAlbumFolder(data, res) {
     if (!fs.existsSync(albumFolderPath)) {
       await fsPromises.mkdir(albumFolderPath, { recursive: true });
       console.log(`[Hydra+: FOLDER] ✓ Created → ${albumFolderName}`);
+      addEvent('success', `Album folder created: ${albumFolderName}`);
     } else {
       console.log(`[Hydra+: FOLDER] Already exists: ${albumFolderName}`);
     }
