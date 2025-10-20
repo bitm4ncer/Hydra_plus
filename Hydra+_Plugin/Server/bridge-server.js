@@ -162,6 +162,10 @@ function addEvent(type, message, trackId = null) {
   return event;
 }
 
+// Track when progress was last cleared (for preventing immediate repopulation)
+let lastProgressClearTime = 0;
+const PROGRESS_CLEAR_COOLDOWN = 5000; // 5 seconds cooldown after clearing
+
 // Cleanup stale progress entries
 function cleanupStaleProgress() {
   const now = Date.now();
@@ -860,6 +864,15 @@ const server = http.createServer((req, res) => {
         const data = JSON.parse(body);
         const { trackId, filename, progress, bytesDownloaded, totalBytes } = data;
 
+        // Check cooldown period after clearing - reject updates during cooldown
+        const now = Date.now();
+        if (now - lastProgressClearTime < PROGRESS_CLEAR_COOLDOWN) {
+          // Silently ignore progress updates during cooldown period
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ success: true, ignored: true }));
+          return;
+        }
+
         // Debug: Log progress update (throttled to avoid spam)
         if (progress === 0 || progress >= 100 || Math.floor(progress) % 10 === 0) {
           console.log(`[Hydra+: PROGRESS] ${filename.substring(0, 40)}: ${Math.round(progress)}%`);
@@ -915,7 +928,8 @@ const server = http.createServer((req, res) => {
   if (req.method === 'POST' && req.url === '/clear-progress') {
     const count = activeDownloads.size;
     activeDownloads.clear();
-    console.log(`[Hydra+: PROGRESS] Cleared all ${count} active downloads`);
+    lastProgressClearTime = Date.now();
+    console.log(`[Hydra+: PROGRESS] Cleared all ${count} active downloads (cooldown: 5s)`);
 
     res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({ success: true, cleared: count }));
