@@ -405,8 +405,9 @@ const server = http.createServer(async (req, res) => {
     const queue = await readQueue();
     const pending = queue.filter(item => !item.processed);
 
-    console.log(`[Hydra+ STATE] /pending called - returning ${pending.length} unprocessed searches`);
+    // Only log when there are pending searches (reduce spam)
     if (pending.length > 0) {
+      console.log(`[Hydra+ STATE] /pending called - returning ${pending.length} unprocessed searches`);
       console.log(`[Hydra+ STATE] First pending: ${pending[0].artist || pending[0].query} - ${pending[0].track || 'search'}`);
     }
 
@@ -551,16 +552,30 @@ const server = http.createServer(async (req, res) => {
       try {
         const data = JSON.parse(body);
 
+        // DEBUG: Log received data to understand what's being sent
+        console.log(`[Hydra+ STATE] DEBUG: Received album search data:`, JSON.stringify(data, null, 2));
+
         const queue = await readQueue();
+
+        // Extract artist and album with all format support
+        const artist = data.artist || data.album_artist || data.albumArtist || '';
+        const album = data.album || data.album_name || data.albumName || '';
+
         const searchEntry = {
           search_id: Date.now(),
           type: 'album',
-          artist: data.artist,
-          album: data.album,
+          query: `${artist} ${album}`,  // Generate query for Python plugin
+          artist: artist,
+          album: album,
+          album_name: album,      // Add for Python compatibility
+          album_artist: artist,   // Add for Python compatibility
           tracks: data.tracks || [],
-          format: data.format || 'MP3',
-          album_id: data.album_id || null,
+          format: data.format || data.format_preference || 'MP3',
+          format_preference: (data.format || data.format_preference || 'MP3').toLowerCase(),
+          album_id: data.album_id || data.albumId || null,
+          year: data.year || null,
           auto_download: data.auto_download !== undefined ? data.auto_download : true,
+          metadata_override: data.metadata_override !== undefined ? data.metadata_override : true,
           processed: false,
           timestamp: new Date().toISOString()
         };
@@ -568,7 +583,7 @@ const server = http.createServer(async (req, res) => {
         queue.push(searchEntry);
         await writeQueue(queue);
 
-        console.log(`[Hydra+ STATE] ✓ Queued album: ${data.artist} - ${data.album} (${data.tracks.length} tracks)`);
+        console.log(`[Hydra+ STATE] ✓ Queued album: ${artist} - ${album} (${data.tracks.length} tracks)`);
 
         res.writeHead(200, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ success: true, search_id: searchEntry.search_id }));
@@ -679,8 +694,6 @@ server.listen(PORT, async () => {
   console.log('  [STATUS]    → 🟢 ONLINE');
   console.log('  [ROLE]      → State Management (Progress, Events, Queue)');
   console.log('  [ENDPOINTS] → /status /progress /event /search /pending');
-  console.log('════════════════════════════════════════════════════════════════');
-  console.log('  Lightweight & stable - never crashes! 🛡️');
   console.log('════════════════════════════════════════════════════════════════');
   console.log('');
 });
