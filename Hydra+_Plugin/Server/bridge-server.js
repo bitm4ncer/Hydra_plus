@@ -816,7 +816,7 @@ const server = http.createServer((req, res) => {
     return;
   }
 
-  // Handle POST to /event - Receive event from Python plugin
+  // Handle POST to /event - Receive event from Python plugin (NON-BLOCKING)
   if (req.method === 'POST' && req.url === '/event') {
     let body = '';
 
@@ -829,14 +829,15 @@ const server = http.createServer((req, res) => {
         const data = JSON.parse(body);
         const { type, message, trackId } = data;
 
-        // Debug: Log received event
-        console.log(`[Hydra+: EVENT] Received: [${type}] ${message.substring(0, 60)} (trackId: ${trackId || 'none'})`);
-
-        // Add event to tracking
-        addEvent(type || 'info', message, trackId);
-
+        // CRITICAL: Return immediately (fire-and-forget)
         res.writeHead(200, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ success: true }));
+
+        // Process event asynchronously after response sent
+        setImmediate(() => {
+          console.log(`[Hydra+: EVENT] Received: [${type}] ${message.substring(0, 60)} (trackId: ${trackId || 'none'})`);
+          addEvent(type || 'info', message, trackId);
+        });
       } catch (error) {
         console.error('[Hydra+: EVENT] ✗ Error:', error);
         res.writeHead(400, { 'Content-Type': 'application/json' });
@@ -847,7 +848,7 @@ const server = http.createServer((req, res) => {
     return;
   }
 
-  // Handle POST to /progress - Receive download progress update from Python plugin
+  // Handle POST to /progress - Receive download progress update from Python plugin (NON-BLOCKING)
   if (req.method === 'POST' && req.url === '/progress') {
     let body = '';
 
@@ -860,16 +861,20 @@ const server = http.createServer((req, res) => {
         const data = JSON.parse(body);
         const { trackId, filename, progress, bytesDownloaded, totalBytes } = data;
 
-        // Debug: Log progress update (throttled to avoid spam)
-        if (progress === 0 || progress >= 100 || Math.floor(progress) % 10 === 0) {
-          console.log(`[Hydra+: PROGRESS] ${filename.substring(0, 40)}: ${Math.round(progress)}%`);
-        }
-
-        // Update active download progress
-        updateDownloadProgress(trackId, filename, progress, bytesDownloaded, totalBytes);
-
+        // CRITICAL: Return immediately (fire-and-forget)
         res.writeHead(200, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ success: true }));
+
+        // Process progress update asynchronously after response sent
+        setImmediate(() => {
+          // Debug: Log progress update (throttled to avoid spam)
+          if (progress === 0 || progress >= 100 || Math.floor(progress) % 10 === 0) {
+            console.log(`[Hydra+: PROGRESS] ${filename.substring(0, 40)}: ${Math.round(progress)}%`);
+          }
+
+          // Update active download progress
+          updateDownloadProgress(trackId, filename, progress, bytesDownloaded, totalBytes);
+        });
       } catch (error) {
         console.error('[Hydra+: PROGRESS] ✗ Error:', error);
         res.writeHead(400, { 'Content-Type': 'application/json' });
