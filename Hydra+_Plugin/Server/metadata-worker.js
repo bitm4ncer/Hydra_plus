@@ -27,7 +27,10 @@ app.use(express.json());
 
 // Spotify credentials storage
 let spotifyCredentials = null;
-let renamePattern = '{artist} - {track}';
+let renamePattern = {
+  singleTrack: '{artist} - {track}',  // Default for single downloads
+  albumTrack: '{trackNum} {artist} - {track}'  // Default for album downloads
+};
 
 // Helper: Log with timestamp
 function log(message) {
@@ -364,15 +367,17 @@ async function downloadCoverArt(imageUrl, outputPath) {
  */
 async function writeId3Tags(filePath, metadata) {
   try {
-    const { artist, track, year, genre, label, coverArtPath } = metadata;
+    const { artist, track, album, year, genre, label, trackNumber, coverArtPath } = metadata;
 
     // Build ffmpeg command (escape values that may contain spaces)
     let metadataArgs = [];
     if (artist) metadataArgs.push('-metadata', `"artist=${artist}"`);
     if (track) metadataArgs.push('-metadata', `"title=${track}"`);
+    if (album) metadataArgs.push('-metadata', `"album=${album}"`);
     if (year) metadataArgs.push('-metadata', `"date=${year}"`);
     if (genre) metadataArgs.push('-metadata', `"genre=${genre}"`);
     if (label) metadataArgs.push('-metadata', `"publisher=${label}"`);
+    if (trackNumber) metadataArgs.push('-metadata', `"track=${trackNumber}"`);
 
     // Create temporary output file
     const tempPath = `${filePath}.temp.mp3`;
@@ -428,7 +433,7 @@ async function writeId3Tags(filePath, metadata) {
  */
 async function writeFlacTags(filePath, metadata) {
   try {
-    const { artist, track, year, genre, label, coverArtPath } = metadata;
+    const { artist, track, album, year, genre, label, trackNumber, coverArtPath } = metadata;
 
     // Build metaflac commands
     const commands = [];
@@ -439,9 +444,11 @@ async function writeFlacTags(filePath, metadata) {
     // Add new tags
     if (artist) commands.push(`metaflac --set-tag="ARTIST=${artist}" "${filePath}"`);
     if (track) commands.push(`metaflac --set-tag="TITLE=${track}" "${filePath}"`);
+    if (album) commands.push(`metaflac --set-tag="ALBUM=${album}" "${filePath}"`);
     if (year) commands.push(`metaflac --set-tag="DATE=${year}" "${filePath}"`);
     if (genre) commands.push(`metaflac --set-tag="GENRE=${genre}" "${filePath}"`);
     if (label) commands.push(`metaflac --set-tag="LABEL=${label}" "${filePath}"`);
+    if (trackNumber) commands.push(`metaflac --set-tag="TRACKNUMBER=${trackNumber}" "${filePath}"`);
 
     // Add cover art if available
     if (coverArtPath && fsSync.existsSync(coverArtPath)) {
@@ -468,18 +475,39 @@ async function writeFlacTags(filePath, metadata) {
 /**
  * Rename file according to pattern
  */
-async function renameFile(filePath, artist, track) {
+async function renameFile(filePath, artist, track, trackNumber = 0, album = '', year = '') {
   try {
     const dir = path.dirname(filePath);
     const ext = path.extname(filePath);
 
-    // Replace pattern placeholders
-    let newName = renamePattern
-      .replace('{artist}', artist)
-      .replace('{track}', track);
+    // Sanitize inputs
+    const sanitize = (str) => String(str || '').replace(/[<>:"/\\|?*]/g, '_');
+    const artistClean = sanitize(artist);
+    const trackClean = sanitize(track);
+    const albumClean = sanitize(album);
+    const yearClean = sanitize(year);
 
-    // Sanitize filename (remove invalid characters)
-    newName = newName.replace(/[<>:"/\\|?*]/g, '_');
+    if (!artistClean && !trackClean) {
+      log(`✗ Cannot rename - missing both artist and track name`);
+      return filePath;
+    }
+
+    // Choose pattern based on whether this is an album track
+    const pattern = (trackNumber && trackNumber > 0) ? renamePattern.albumTrack : renamePattern.singleTrack;
+
+    // Build filename from pattern
+    let newName = pattern;
+
+    // Replace tokens with actual values
+    newName = newName.replace(/\{trackNum\}/g, trackNumber ? String(trackNumber).padStart(2, '0') : '');
+    newName = newName.replace(/\{artist\}/g, artistClean);
+    newName = newName.replace(/\{track\}/g, trackClean);
+    newName = newName.replace(/\{album\}/g, albumClean);
+    newName = newName.replace(/\{year\}/g, yearClean);
+
+    // Clean up extra spaces/separators left by empty tokens
+    newName = newName.replace(/\s+/g, ' ').replace(/\s*-\s*-\s*/g, ' - ').trim();
+    newName = newName.replace(/^-\s*/, '').replace(/\s*-$/, ''); // Remove leading/trailing dashes
 
     const newPath = path.join(dir, newName + ext);
 
@@ -488,11 +516,20 @@ async function renameFile(filePath, artist, track) {
       return filePath;
     }
 
-    // Rename file
-    await fs.rename(filePath, newPath);
-    log(`✓ Renamed: ${path.basename(filePath)} → ${path.basename(newPath)}`);
+    // Handle duplicates
+    let finalPath = newPath;
+    let counter = 1;
+    while (fsSync.existsSync(finalPath) && finalPath !== filePath) {
+      const base = newName;
+      finalPath = path.join(dir, `${base} (${counter})${ext}`);
+      counter++;
+    }
 
-    return newPath;
+    // Rename file
+    await fs.rename(filePath, finalPath);
+    log(`✓ Renamed: ${path.basename(filePath)} → ${path.basename(finalPath)}`);
+
+    return finalPath;
   } catch (error) {
     log(`✗ Failed to rename file: ${error.message}`);
     return filePath; // Return original path on error
@@ -618,13 +655,22 @@ app.post('/test-spotify-credentials', async (req, res) => {
  * Set rename pattern
  */
 app.post('/set-rename-pattern', (req, res) => {
-  const { pattern } = req.body;
-  if (!pattern) {
+  const { pattern, singleTrack, albumTrack } = req.body;
+
+  // Support both old format (single string) and new format (object with singleTrack/albumTrack)
+  if (singleTrack || albumTrack) {
+    if (singleTrack) renamePattern.singleTrack = singleTrack;
+    if (albumTrack) renamePattern.albumTrack = albumTrack;
+    log(`✓ Rename pattern updated: single="${renamePattern.singleTrack}", album="${renamePattern.albumTrack}"`);
+  } else if (pattern) {
+    // Legacy support: if single pattern string provided, use for both
+    renamePattern.singleTrack = pattern;
+    renamePattern.albumTrack = pattern;
+    log(`✓ Rename pattern updated (legacy): ${pattern}`);
+  } else {
     return res.status(400).json({ error: 'Missing pattern' });
   }
 
-  renamePattern = pattern;
-  log(`✓ Rename pattern updated: ${pattern}`);
   res.json({ success: true });
 });
 
@@ -641,6 +687,11 @@ app.post('/process-metadata', async (req, res) => {
       artist,
       track,
       album,
+      trackId,
+      trackNumber,
+      prefetchedYear,
+      prefetchedImageUrl,
+      targetFolder,
       shouldFetchSpotify = true,
       shouldDownloadCoverArt = true,
       shouldWriteTags = true,
@@ -651,97 +702,193 @@ app.post('/process-metadata', async (req, res) => {
       return res.status(400).json({ error: 'Invalid file path' });
     }
 
+    // Result object to return to Python plugin
     const result = {
-      success: false,
-      filePath: filePath,
-      metadata: {},
-      actions: {
-        spotifyFetch: false,
-        coverArtDownload: false,
-        tagsWritten: false,
-        fileRenamed: false
-      }
+      success: true,
+      original_path: filePath,
+      new_path: filePath,
+      renamed: false,
+      moved_to_folder: false,
+      tags_updated: false,
+      cover_embedded: false,
+      year: null,
+      track_number: trackNumber || null,
+      genre: null,
+      label: null
     };
 
     log(`Processing metadata for: ${path.basename(filePath)}`);
 
-    // Step 1: Fetch Spotify metadata
-    let spotifyMetadata = null;
-    if (shouldFetchSpotify && artist && track) {
-      spotifyMetadata = await getSpotifyMetadata(artist, track);
-      if (spotifyMetadata) {
-        result.metadata = spotifyMetadata;
-        result.actions.spotifyFetch = true;
-        log(`✓ Spotify metadata fetched`);
-      }
+    // Check if file format is supported
+    const ext = path.extname(filePath).toLowerCase();
+    const isMP3 = ext === '.mp3';
+    const isFLAC = ext === '.flac';
+
+    if (!isMP3 && !isFLAC) {
+      return res.status(400).json({ error: `Unsupported format: ${ext} (only MP3/FLAC supported)` });
     }
 
-    // Step 2: Download cover art
-    let coverArtPath = null;
-    if (shouldDownloadCoverArt && spotifyMetadata && spotifyMetadata.imageUrl) {
-      const coverArtFilename = `cover_${Date.now()}.jpg`;
-      coverArtPath = path.join(path.dirname(filePath), coverArtFilename);
+    log(`Format detected: ${isMP3 ? 'MP3' : 'FLAC'}`);
 
-      try {
-        await downloadCoverArt(spotifyMetadata.imageUrl, coverArtPath);
-        result.actions.coverArtDownload = true;
-        log(`✓ Cover art downloaded`);
-      } catch (error) {
-        log(`✗ Cover art download failed: ${error.message}`);
-      }
-    }
-
-    // Step 3: Write ID3 tags
+    // ========================================================================
+    // STEP 1: RENAME FILE FIRST (before any network operations that could timeout)
+    // ========================================================================
     let currentFilePath = filePath;
-    if (shouldWriteTags) {
-      const ext = path.extname(filePath).toLowerCase();
-      const tagMetadata = {
-        artist,
-        track,
-        year: spotifyMetadata?.year,
-        genre: spotifyMetadata?.genre,
-        label: spotifyMetadata?.label,
-        coverArtPath
-      };
-
-      let tagsWritten = false;
-      if (ext === '.mp3') {
-        tagsWritten = await writeId3Tags(currentFilePath, tagMetadata);
-      } else if (ext === '.flac') {
-        tagsWritten = await writeFlacTags(currentFilePath, tagMetadata);
-      }
-
-      result.actions.tagsWritten = tagsWritten;
-    }
-
-    // Step 4: Rename file
     if (shouldRename && artist && track) {
-      const newPath = await renameFile(currentFilePath, artist, track);
+      const newPath = await renameFile(currentFilePath, artist, track, trackNumber, album, prefetchedYear);
       if (newPath !== currentFilePath) {
         currentFilePath = newPath;
-        result.actions.fileRenamed = true;
-        result.filePath = newPath;
+        result.new_path = newPath;
+        result.renamed = true;
       }
     }
 
-    // Clean up temporary cover art
-    if (coverArtPath && fsSync.existsSync(coverArtPath)) {
+    // ========================================================================
+    // STEP 2: MOVE TO TARGET FOLDER if specified (for album downloads)
+    // CRITICAL: Move immediately after rename to prevent orphaned files on crash
+    // ========================================================================
+    if (targetFolder) {
       try {
-        await fs.unlink(coverArtPath);
-      } catch {}
+        if (!fsSync.existsSync(targetFolder)) {
+          throw new Error(`Target folder does not exist: ${targetFolder}`);
+        }
+
+        const fileName = path.basename(currentFilePath);
+        const targetPath = path.join(targetFolder, fileName);
+
+        // Only move if not already in target folder
+        if (targetPath !== currentFilePath) {
+          // Handle duplicates
+          let finalPath = targetPath;
+          let counter = 1;
+          while (fsSync.existsSync(finalPath) && finalPath !== currentFilePath) {
+            const ext = path.extname(fileName);
+            const base = path.basename(fileName, ext);
+            finalPath = path.join(targetFolder, `${base} (${counter})${ext}`);
+            counter++;
+          }
+
+          await fs.rename(currentFilePath, finalPath);
+          log(`✓ Moved to album folder: ${path.basename(targetFolder)}`);
+          currentFilePath = finalPath;
+          result.new_path = finalPath;
+          result.moved_to_folder = true;
+        } else {
+          log(`Already in target folder`);
+          result.moved_to_folder = true;
+        }
+      } catch (moveError) {
+        log(`⚠ Failed to move to folder: ${moveError.message}`);
+        // Don't fail the whole operation if move fails - file is still renamed
+        result.moved_to_folder = false;
+      }
     }
 
-    result.success = true;
-    const duration = Date.now() - startTime;
-    log(`✓ Metadata processing complete (${duration}ms)`);
-
+    // ========================================================================
+    // CRITICAL FIX: Always send success response immediately after renaming/moving
+    // This prevents Python plugin timeout issues, especially for album batches
+    // ========================================================================
     res.json(result);
+
+    // ========================================================================
+    // Continue with metadata processing in background (don't block response)
+    // This runs asynchronously and won't delay the next track in album batches
+    // CRITICAL: All code in this block must be wrapped in try-catch to prevent server crashes
+    // ========================================================================
+    setTimeout(async () => {
+      try {
+        log('[META] Continuing metadata fetch in background...');
+
+        // Step 3: Fetch extended metadata from Spotify
+        // IMPROVED: Use prefetched metadata if available (skip Spotify page fetch)
+        let spotifyMetadata = null;
+
+        if (prefetchedYear || prefetchedImageUrl) {
+          // Use prefetched metadata from Python cache
+          log('✓ Using prefetched metadata from cache');
+          spotifyMetadata = {
+            year: prefetchedYear || null,
+            imageUrl: prefetchedImageUrl || null,
+            genre: null,
+            label: null
+          };
+        } else if (shouldFetchSpotify && artist && track) {
+          // Fallback: Fetch from Spotify (for single tracks or cache miss)
+          try {
+            spotifyMetadata = await getSpotifyMetadata(artist, track);
+            if (spotifyMetadata) {
+              log(`✓ Spotify metadata fetched`);
+            }
+          } catch (spotifyError) {
+            log(`✗ Spotify metadata error: ${spotifyError.message}`);
+            spotifyMetadata = {};
+          }
+        }
+
+        // Step 4: Download cover art
+        let coverArtPath = null;
+        if (shouldDownloadCoverArt && spotifyMetadata && spotifyMetadata.imageUrl) {
+          const coverArtFilename = `cover_${Date.now()}.jpg`;
+          coverArtPath = path.join(path.dirname(currentFilePath), coverArtFilename);
+
+          try {
+            await downloadCoverArt(spotifyMetadata.imageUrl, coverArtPath);
+            log(`✓ Cover art downloaded`);
+          } catch (error) {
+            log(`✗ Cover art download failed: ${error.message}`);
+            coverArtPath = null;
+          }
+        }
+
+        // Step 5: Write ID3 tags
+        if (shouldWriteTags) {
+          const tagMetadata = {
+            artist,
+            track,
+            album,
+            year: spotifyMetadata?.year,
+            genre: spotifyMetadata?.genre,
+            label: spotifyMetadata?.label,
+            trackNumber: trackNumber,
+            coverArtPath
+          };
+
+          let tagsWritten = false;
+          if (isMP3) {
+            tagsWritten = await writeId3Tags(currentFilePath, tagMetadata);
+          } else if (isFLAC) {
+            tagsWritten = await writeFlacTags(currentFilePath, tagMetadata);
+          }
+
+          if (tagsWritten) {
+            log(`✓ Tags and cover art embedded`);
+          }
+        }
+
+        // Clean up temporary cover art
+        if (coverArtPath && fsSync.existsSync(coverArtPath)) {
+          try {
+            await fs.unlink(coverArtPath);
+          } catch {}
+        }
+
+        const duration = Date.now() - startTime;
+        log(`✓ Background metadata processing complete (${duration}ms)`);
+
+      } catch (backgroundError) {
+        log(`✗ Background processing error: ${backgroundError.message}`);
+        // Don't crash the server - just log the error
+      }
+    }, 500); // 500ms delay to prevent concurrent job pile-up
+
   } catch (error) {
     log(`✗ Metadata processing failed: ${error.message}`);
-    res.status(500).json({
-      error: error.message,
-      stack: error.stack
-    });
+    if (!res.headersSent) {
+      res.status(500).json({
+        success: false,
+        error: error.message
+      });
+    }
   }
 });
 
@@ -750,19 +897,41 @@ app.post('/process-metadata', async (req, res) => {
  */
 app.post('/ensure-album-folder', async (req, res) => {
   try {
-    const { trackPath, artist, album } = req.body;
+    // Support both old format (trackPath, artist, album) and new format (album_artist, album_name, download_dir)
+    const { trackPath, artist, album, album_artist, album_name, download_dir } = req.body;
 
-    if (!trackPath || !artist || !album) {
-      return res.status(400).json({ error: 'Missing required parameters' });
+    // Determine which format is being used
+    const artistName = album_artist || artist;
+    const albumTitle = album_name || album;
+    const baseDir = download_dir || (trackPath ? path.dirname(trackPath) : null);
+
+    if (!artistName || !albumTitle || !baseDir) {
+      return res.status(400).json({ error: 'Missing required parameters (need artist+album+path)' });
     }
 
-    const albumPath = await createAlbumFolder(trackPath, artist, album);
+    // Check if base directory exists
+    if (!fsSync.existsSync(baseDir)) {
+      return res.status(400).json({ error: `Base directory does not exist: ${baseDir}` });
+    }
 
-    if (albumPath) {
-      res.json({ success: true, albumPath });
+    // Sanitize folder name
+    const folderName = `${artistName} - ${albumTitle}`.replace(/[<>:"/\\|?*]/g, '_');
+    const albumPath = path.join(baseDir, folderName);
+
+    // Create folder if it doesn't exist
+    if (!fsSync.existsSync(albumPath)) {
+      await fs.mkdir(albumPath, { recursive: true });
+      log(`✓ Created album folder: ${folderName}`);
     } else {
-      res.status(500).json({ error: 'Failed to create album folder' });
+      log(`Album folder already exists: ${folderName}`);
     }
+
+    res.json({
+      success: true,
+      albumPath: albumPath,
+      folder_path: albumPath, // Python expects 'folder_path'
+      folder_name: folderName
+    });
   } catch (error) {
     log(`✗ Error creating album folder: ${error.message}`);
     res.status(500).json({ error: error.message });
@@ -840,7 +1009,8 @@ async function startServer() {
       log(`========================================`);
       log(`Metadata Worker started on port ${PORT}`);
       log(`Spotify credentials: ${spotifyCredentials ? 'Configured' : 'Not configured'}`);
-      log(`Rename pattern: ${renamePattern}`);
+      log(`Rename pattern (single): ${renamePattern.singleTrack}`);
+      log(`Rename pattern (album): ${renamePattern.albumTrack}`);
       log(`========================================`);
     });
   } catch (error) {

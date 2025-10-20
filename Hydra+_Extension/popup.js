@@ -1264,22 +1264,3 @@ albumTrackPattern.addEventListener('input', () => {
 
 // Load patterns on startup
 loadPatterns();
-
-// Clear All Progress Bars button
-const clearProgressBtn = document.getElementById('clearProgressBtn');
-if (clearProgressBtn) {
-  clearProgressBtn.addEventListener('click', () => {
-    console.log('[Hydra+ PROGRESS] Clear All button clicked');
-
-    // Clear the completed downloads map
-    completedDownloads.clear();
-
-    // Remove all progress bars from DOM
-    const progressBarsContainer = document.getElementById('progressBarsContainer');
-    if (progressBarsContainer) {
-      progressBarsContainer.innerHTML = '';
-    }
-
-    console.log('[Hydra+ PROGRESS] ✓ All progress bars cleared');
-  });
-}

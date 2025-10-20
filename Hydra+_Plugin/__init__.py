@@ -2400,24 +2400,24 @@ class Plugin(BasePlugin):
                         del self.metadata_cache[cache_key]
                         self.log(f"[Hydra+: ALBUM-META]   Cached metadata expired (age={int(age)}s)")
 
-            # Prepare request data with track number and prefetched album metadata
+            # Prepare request data with track number and prefetched album metadata (using camelCase for Node.js)
             payload = {
-                'file_path': file_path,
+                'filePath': file_path,  # camelCase for Node.js
                 'artist': track_info.get('artist', ''),
                 'track': track_info.get('track', ''),
                 'album': track_info.get('album', ''),
-                'track_id': track_info.get('track_id', ''),
-                'track_number': track_info.get('track_number', 0)
+                'trackId': track_info.get('track_id', ''),  # camelCase for Node.js
+                'trackNumber': track_info.get('track_number', 0)  # camelCase for Node.js
             }
 
             # Add prefetched album metadata if available (server will skip Spotify page fetch)
             if album_metadata:
-                payload['prefetched_year'] = album_metadata.get('year', '')
-                payload['prefetched_image_url'] = album_metadata.get('image_url', '')
+                payload['prefetchedYear'] = album_metadata.get('year', '')  # camelCase for Node.js
+                payload['prefetchedImageUrl'] = album_metadata.get('image_url', '')  # camelCase for Node.js
 
             # Add target folder if specified (server will move file after processing)
             if target_folder:
-                payload['target_folder'] = target_folder
+                payload['targetFolder'] = target_folder  # camelCase for Node.js
 
             # Send to Metadata Worker with REDUCED timeout (server responds immediately now)
             url = f"{self.settings['metadata_url']}/process-metadata"
@@ -2625,15 +2625,42 @@ class Plugin(BasePlugin):
                 self.log(f"[Hydra+: ALBUM-META] ✗ Unsupported format (only MP3/FLAC), skipping: {file_path}")
                 return
 
-            # Prepare request data with track number
+            # IMPROVED: Check if we have prefetched ALBUM metadata in cache (with TTL check)
+            album_metadata = None
+            token = search_info.get('token')
+            if token is not None:
+                cache_key = (token, 'album')
+                cached_entry = self.metadata_cache.get(cache_key)
+                if cached_entry:
+                    # Check if cache entry is still valid
+                    age = time.time() - cached_entry.get('timestamp', 0)
+                    if age < self.metadata_cache_max_age:
+                        album_metadata = cached_entry.get('data')
+                        self.log(f"[Hydra+: ALBUM-META]   Using cached album metadata (year={album_metadata.get('year', 'N/A')})")
+                    else:
+                        # Expired, remove it
+                        del self.metadata_cache[cache_key]
+                        self.log(f"[Hydra+: ALBUM-META]   Cached metadata expired (age={int(age)}s)")
+
+            # Prepare request data with track number (using camelCase for Node.js)
             payload = {
-                'file_path': file_path,
+                'filePath': file_path,  # camelCase for Node.js
                 'artist': track_info.get('artist', ''),
                 'track': track_info.get('track', ''),
                 'album': track_info.get('album', ''),
-                'track_id': track_info.get('track_id', ''),
-                'track_number': track_info.get('track_number', 0)
+                'trackId': track_info.get('track_id', ''),  # camelCase for Node.js
+                'trackNumber': track_info.get('track_number', 0)  # camelCase for Node.js
             }
+
+            # Add prefetched album metadata if available (server will skip Spotify page fetch)
+            if album_metadata:
+                payload['prefetchedYear'] = album_metadata.get('year', '')  # camelCase for Node.js
+                payload['prefetchedImageUrl'] = album_metadata.get('image_url', '')  # camelCase for Node.js
+
+            # Add target folder if specified (server will move file after processing)
+            target_folder = search_info.get('album_folder_path')
+            if target_folder:
+                payload['targetFolder'] = target_folder  # camelCase for Node.js
 
             self.log(f"[Hydra+: ALBUM-META] Sending request to bridge server...")
 
