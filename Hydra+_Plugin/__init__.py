@@ -226,15 +226,42 @@ class Plugin(BasePlugin):
         try:
             self.log(f"[Hydra+] Starting dual server architecture...")
 
-            # Configure subprocess to show console windows (for debugging)
+            # Determine if we should show console windows based on debug setting
+            # First, try to get debug setting from state server if it's already running
+            # Otherwise, use default (no console windows)
+            show_console = False
+
+            # Try to fetch debug setting from state server if available
+            try:
+                req = Request('http://127.0.0.1:3847/get-debug-mode', method='GET')
+                with urlopen(req, timeout=1) as response:
+                    if response.status == 200:
+                        data = json.loads(response.read().decode('utf-8'))
+                        if data.get('success') and data.get('debugMode'):
+                            show_console = data['debugMode'].get('debugWindows', False)
+                            self.log(f"[Hydra+] Debug windows setting from server: {show_console}")
+            except:
+                # State server not running yet or endpoint not available - use default
+                self.log("[Hydra+] Using default debug setting (console windows disabled)")
+                pass
+
+            # Configure subprocess based on debug setting
             startupinfo = None
             creationflags = 0
             if os.name == 'nt':  # Windows
                 startupinfo = subprocess.STARTUPINFO()
-                # CREATE_NEW_CONSOLE flag creates a visible console window for each server
-                creationflags = subprocess.CREATE_NEW_CONSOLE
+                if show_console:
+                    # CREATE_NEW_CONSOLE flag creates a visible console window for each server
+                    creationflags = subprocess.CREATE_NEW_CONSOLE
+                    self.log("[Hydra+] Console windows enabled (debug mode)")
+                else:
+                    # Hide console windows - use STARTF_USESHOWWINDOW flag
+                    # This prevents terminal windows from appearing
+                    startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+                    startupinfo.wShowWindow = 0  # SW_HIDE
+                    self.log("[Hydra+] Console windows hidden (normal mode)")
 
-            # Start State Server (Port 3847) with visible console
+            # Start State Server (Port 3847)
             self.log(f"[Hydra+] Starting state server (Port 3847)...")
             self.server_process = subprocess.Popen(
                 ['node', self.state_server_path],
@@ -245,7 +272,7 @@ class Plugin(BasePlugin):
             # Wait briefly for state server to initialize
             time.sleep(1)
 
-            # Start Metadata Worker (Port 3848) with visible console
+            # Start Metadata Worker (Port 3848)
             self.log(f"[Hydra+] Starting metadata worker (Port 3848)...")
             self.metadata_process = subprocess.Popen(
                 ['node', self.metadata_worker_path],
@@ -253,7 +280,8 @@ class Plugin(BasePlugin):
                 creationflags=creationflags
             )
 
-            self.log("[Hydra+] Both servers started with visible consoles, will verify in background")
+            console_status = "visible consoles" if show_console else "hidden consoles"
+            self.log(f"[Hydra+] Both servers started with {console_status}, will verify in background")
             return True
 
         except FileNotFoundError:
@@ -753,11 +781,46 @@ class Plugin(BasePlugin):
 
                         # Try to find track ID from active_downloads
                         track_id = None
+                        search_token = None
+                        search_info = None
+
                         if virtual_path in self.active_downloads:
                             search_token = self.active_downloads[virtual_path]
                             if search_token in self.active_searches:
                                 search_info = self.active_searches[search_token]
-                                track_id = search_info.get('track_id', '') or f"{search_info.get('artist', '')}-{search_info.get('track', '')}".replace(' ', '')[:20]
+
+                                # IMPROVED: For album downloads, use album-level trackId and calculate cumulative progress
+                                if search_info.get('type') == 'album' and 'album_track_id' in search_info:
+                                    track_id = search_info['album_track_id']
+
+                                    # Calculate cumulative album progress
+                                    completed_tracks = search_info.get('completed_track_count', 0)
+                                    total_tracks = len(search_info.get('tracks_to_download', []))
+                                    total_album_bytes = search_info.get('total_album_bytes', 0)
+
+                                    if total_album_bytes > 0:
+                                        # Calculate bytes from completed tracks
+                                        completed_bytes = 0
+                                        tracks_to_download = search_info.get('tracks_to_download', [])
+                                        for i in range(completed_tracks):
+                                            if i < len(tracks_to_download):
+                                                completed_bytes += tracks_to_download[i].get('file_size', 0)
+
+                                        # Add current track's progress
+                                        total_downloaded_bytes = completed_bytes + bytes_downloaded
+                                        progress = min(100, (total_downloaded_bytes / total_album_bytes) * 100)
+
+                                        # Use album name as filename for progress bar
+                                        filename = search_info.get('album_name', filename)
+                                    else:
+                                        # Fallback: Use track count if byte size unknown
+                                        if total_tracks > 0:
+                                            current_track_progress = progress / 100.0  # Normalize to 0-1
+                                            progress = ((completed_tracks + current_track_progress) / total_tracks) * 100
+                                            filename = search_info.get('album_name', filename)
+                                else:
+                                    # Single track download - use original logic
+                                    track_id = search_info.get('track_id', '') or f"{search_info.get('artist', '')}-{search_info.get('track', '')}".replace(' ', '')[:20]
 
                         # Fallback: generate track ID from filename
                         if not track_id:
@@ -767,10 +830,33 @@ class Plugin(BasePlugin):
                         monitored_downloads[virtual_path] = track_id
 
                         # Send progress update to bridge
-                        self._send_progress_update(track_id, filename, progress, bytes_downloaded, total_bytes)
+                        # For albums, send cumulative bytes instead of current track bytes
+                        if search_info and search_info.get('type') == 'album' and 'album_track_id' in search_info:
+                            completed_tracks = search_info.get('completed_track_count', 0)
+                            total_album_bytes = search_info.get('total_album_bytes', 0)
+                            tracks_to_download = search_info.get('tracks_to_download', [])
 
-                        # Log ALL progress updates for debugging
-                        self.log(f"[Hydra+: PROGRESS] {filename[:40]}: {int(progress)}% (ID: {track_id})")
+                            # Calculate cumulative bytes for display
+                            cumulative_bytes = 0
+                            for i in range(completed_tracks):
+                                if i < len(tracks_to_download):
+                                    cumulative_bytes += tracks_to_download[i].get('file_size', 0)
+                            cumulative_bytes += bytes_downloaded
+
+                            self._send_progress_update(track_id, filename, progress, cumulative_bytes, total_album_bytes)
+                        else:
+                            self._send_progress_update(track_id, filename, progress, bytes_downloaded, total_bytes)
+
+                        # Log progress updates (reduced verbosity for albums)
+                        if search_info and search_info.get('type') == 'album':
+                            # Only log every 10% for albums to reduce spam
+                            if int(progress) % 10 == 0 or progress == 100:
+                                current_track = search_info.get('current_track_index', 0) + 1
+                                total_tracks = len(search_info.get('tracks_to_download', []))
+                                self.log(f"[Hydra+: ALBUM-PROGRESS] {filename}: {int(progress)}% (Track {current_track}/{total_tracks})")
+                        else:
+                            # Log all progress for single tracks
+                            self.log(f"[Hydra+: PROGRESS] {filename[:40]}: {int(progress)}% (ID: {track_id})")
 
                     except Exception as e:
                         # Skip this transfer if there's an error
@@ -1862,6 +1948,20 @@ class Plugin(BasePlugin):
 
             self.log(f"[Hydra+: ALBUM] ⬇ Track {current_index + 1}/{len(tracks_to_download)}: {track_info['artist']} - {track_info['track']}")
 
+            # IMPROVED: Generate album-level trackId for unified progress bar
+            # This ensures all tracks in the album share the same progress bar
+            album_track_id = f"album_{token}"
+            if 'album_track_id' not in search_info:
+                search_info['album_track_id'] = album_track_id
+                # Initialize album progress tracking
+                search_info['completed_track_count'] = 0
+                search_info['total_album_bytes'] = sum(t.get('file_size', 0) for t in tracks_to_download)
+                self.log(f"[Hydra+: ALBUM] Album trackId: {album_track_id}, Total size: {search_info['total_album_bytes']} bytes")
+
+            # Store current track info for progress calculation
+            search_info['current_track_size'] = track_to_download.get('file_size', 0)
+            search_info['current_track_path'] = track_to_download['file_path']
+
             # Send event to bridge for popup console
             track_id_safe = track_info.get('track_id', '') or f"{track_info['artist']}{track_info['track']}".replace(' ', '').replace('-', '')[:20]
             album_info = f" (Album: {search_info.get('album_name', '')})" if search_info.get('album_name') else ''
@@ -2004,6 +2104,13 @@ class Plugin(BasePlugin):
             self.log(f"[Hydra+: ALBUM] ✓ Album download complete!")
             self.log(f"[Hydra+: ALBUM] Downloaded: {downloaded_count}/{len(tracks_to_download)} tracks")
             self.log(f"[Hydra+: ALBUM] All tracks were processed immediately (no batch processing)")
+
+            # IMPROVED: Send final 100% progress update for album-level progress bar
+            if 'album_track_id' in search_info:
+                album_track_id = search_info['album_track_id']
+                album_name = search_info.get('album_name', 'Album')
+                self._send_progress_update(album_track_id, album_name, 100, 0, 0)
+                self.log(f"[Hydra+: ALBUM-PROGRESS] ✓ Album progress complete at 100%")
 
             # Check if album folder was created
             album_folder = search_info.get('album_folder_path')
@@ -2184,6 +2291,9 @@ class Plugin(BasePlugin):
             track_info = current_track['track_info']
 
             self.log(f"[Hydra+: ALBUM] ✓ Track {current_index + 1}/{len(tracks_to_download)} downloaded: {track_info['track']}")
+
+            # IMPROVED: Increment completed track count for cumulative progress calculation
+            search_info['completed_track_count'] = search_info.get('completed_track_count', 0) + 1
 
             # CRITICAL: Create album folder after first track downloads (not before)
             # This way we can extract the download directory from the actual download path
