@@ -21,6 +21,16 @@ const execAsync = promisify(exec);
 const app = express();
 const PORT = 3848;
 
+// Load flac-tagger module for FLAC metadata
+let FlacTagger = null;
+try {
+  FlacTagger = require('flac-tagger');
+  console.log('[Metadata Worker] ✓ flac-tagger module loaded');
+} catch (err) {
+  console.error('[Metadata Worker] ⚠ flac-tagger package not found! FLAC tagging will not work.');
+  console.error('[Metadata Worker] Please run: npm install');
+}
+
 // Middleware
 app.use(cors());
 app.use(express.json());
@@ -429,36 +439,44 @@ async function writeId3Tags(filePath, metadata) {
 }
 
 /**
- * Write ID3 tags to FLAC file using metaflac
+ * Write ID3 tags to FLAC file using flac-tagger npm package
  */
 async function writeFlacTags(filePath, metadata) {
   try {
+    if (!FlacTagger) {
+      log(`✗ flac-tagger module not available - skipping FLAC tagging`);
+      return false;
+    }
+
     const { artist, track, album, year, genre, label, trackNumber, coverArtPath } = metadata;
 
-    // Build metaflac commands
-    const commands = [];
+    // Create flac-tagger instance
+    const tagger = new FlacTagger(filePath);
 
-    // Remove existing tags
-    commands.push(`metaflac --remove-all-tags "${filePath}"`);
+    // Read existing tags first
+    await tagger.read();
 
-    // Add new tags
-    if (artist) commands.push(`metaflac --set-tag="ARTIST=${artist}" "${filePath}"`);
-    if (track) commands.push(`metaflac --set-tag="TITLE=${track}" "${filePath}"`);
-    if (album) commands.push(`metaflac --set-tag="ALBUM=${album}" "${filePath}"`);
-    if (year) commands.push(`metaflac --set-tag="DATE=${year}" "${filePath}"`);
-    if (genre) commands.push(`metaflac --set-tag="GENRE=${genre}" "${filePath}"`);
-    if (label) commands.push(`metaflac --set-tag="LABEL=${label}" "${filePath}"`);
-    if (trackNumber) commands.push(`metaflac --set-tag="TRACKNUMBER=${trackNumber}" "${filePath}"`);
+    // Set tags (flac-tagger uses Vorbis comment field names)
+    if (artist) tagger.setTag('ARTIST', artist);
+    if (track) tagger.setTag('TITLE', track);
+    if (album) tagger.setTag('ALBUM', album);
+    if (year) tagger.setTag('DATE', year.toString());
+    if (genre) tagger.setTag('GENRE', genre);
+    if (label) tagger.setTag('LABEL', label);
+    if (trackNumber) tagger.setTag('TRACKNUMBER', trackNumber.toString());
 
     // Add cover art if available
     if (coverArtPath && fsSync.existsSync(coverArtPath)) {
-      commands.push(`metaflac --import-picture-from="${coverArtPath}" "${filePath}"`);
+      const coverData = await fs.readFile(coverArtPath);
+      tagger.setPicture(coverData, {
+        type: 3, // Cover (front)
+        description: 'Album cover',
+        mime: 'image/jpeg'
+      });
     }
 
-    // Execute all commands
-    for (const cmd of commands) {
-      await execAsync(cmd);
-    }
+    // Save tags to file
+    await tagger.save();
 
     log(`✓ FLAC tags written to: ${path.basename(filePath)}`);
     return true;
