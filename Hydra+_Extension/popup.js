@@ -252,6 +252,14 @@ chrome.storage.local.get(['fileNamingCollapsed'], (data) => {
 // Load console events on popup open
 loadConsoleEvents();
 
+// Listen for storage changes to update console in real-time
+chrome.storage.onChanged.addListener((changes, namespace) => {
+  if (namespace === 'local' && changes.consoleEvents) {
+    // Events were updated by background.js - reload them
+    loadConsoleEvents();
+  }
+});
+
 // Load and display active download progress bars
 function loadActiveDownloads() {
   chrome.storage.local.get(['activeDownloads'], (data) => {
@@ -570,7 +578,6 @@ metadataOverrideToggle.addEventListener('change', () => {
 
 // Track server status globally
 let isServerOnline = false;
-let lastEventId = 0; // Track last processed event
 
 // Check server status
 async function checkServerStatus() {
@@ -612,29 +619,9 @@ async function checkServerStatus() {
         addConsoleEvent('success', 'Bridge server connected');
       }
 
-      // Process events if provided by server
-      if (data.events && Array.isArray(data.events)) {
-        // Debug: Log all events from server
-        console.log('[Hydra+] Events from server:', data.events.length, 'events, lastEventId:', lastEventId);
-
-        // Filter out events we've already seen
-        const newEvents = data.events.filter(event => event.id > lastEventId);
-
-        console.log('[Hydra+] New events to process:', newEvents.length);
-
-        newEvents.forEach(event => {
-          // Update last event ID
-          if (event.id > lastEventId) {
-            lastEventId = event.id;
-          }
-
-          // Add to console with appropriate type and track ID for color coding
-          addConsoleEvent(event.type || 'info', event.message, event.timestamp, event.trackId);
-        });
-
-        // Store last event ID
-        safeStorageSet({ lastEventId: lastEventId });
-      }
+      // Note: Events are processed by background.js and stored in chrome.storage.local
+      // Popup loads events from storage on startup via loadConsoleEvents()
+      // This prevents duplicate processing and filtering issues
     } else {
       throw new Error('Server returned error');
     }
@@ -652,12 +639,8 @@ async function checkServerStatus() {
   }
 }
 
-// Load last event ID from storage
-chrome.storage.local.get(['lastEventId'], (data) => {
-  if (data.lastEventId) {
-    lastEventId = data.lastEventId;
-  }
-});
+// Events are tracked and stored by background.js
+// Popup loads events from storage via loadConsoleEvents()
 
 // Auto-save credentials when fields change (debounced)
 let saveTimeout;
