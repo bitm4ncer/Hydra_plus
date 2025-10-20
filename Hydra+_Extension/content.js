@@ -221,9 +221,8 @@ async function sendToNicotine(trackInfo) {
     }
     // If storage not available, silently use defaults (no warning needed)
   } catch (error) {
-    // Any error accessing storage - use defaults and continue
-    console.warn('[Hydra+] Could not access storage - using default settings:', error.message || error);
-    // Continue with default values (don't return, just log and proceed)
+    // Silently handle extension context invalidation (happens on extension reload)
+    // Just use default values - no need to log this expected situation
   }
 
   console.log('[Nicotine+] Attempting to send:', query);
@@ -538,7 +537,8 @@ async function sendAlbumToNicotine(albumInfo, tracks) {
     }
     // If storage not available, silently use defaults (no warning needed)
   } catch (error) {
-    // Any error accessing storage - silently use defaults and continue
+    // Silently handle extension context invalidation (happens on extension reload)
+    // Just use default values - no need to log this expected situation
   }
 
   console.log('[Album] Attempting to send:', albumInfo.albumArtist, '-', albumInfo.albumName);
