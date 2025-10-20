@@ -911,6 +911,17 @@ const server = http.createServer((req, res) => {
     return;
   }
 
+  // Handle POST to /clear-progress - Clear all active download progress
+  if (req.method === 'POST' && req.url === '/clear-progress') {
+    const count = activeDownloads.size;
+    activeDownloads.clear();
+    console.log(`[Hydra+: PROGRESS] Cleared all ${count} active downloads`);
+
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ success: true, cleared: count }));
+    return;
+  }
+
   // Handle POST to /ensure-album-folder - Create album folder (upfront, before downloads)
   if (req.method === 'POST' && req.url === '/ensure-album-folder') {
     let body = '';

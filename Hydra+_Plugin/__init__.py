@@ -659,15 +659,23 @@ class Plugin(BasePlugin):
 
                 # Get all active transfers
                 transfers = self.core.downloads.transfers
-                current_paths = set(transfers.keys())
+                current_paths = set()
 
-                # Detect removed downloads (were monitored but no longer in transfers)
+                # Build set of current paths that are actually being tracked
+                for virtual_path, transfer in transfers.items():
+                    # Only include if it's in our active tracking and not finished
+                    if virtual_path in self.active_downloads:
+                        if not (hasattr(transfer, 'status') and transfer.status in ('Finished', 'Paused', 'Filtered')):
+                            current_paths.add(virtual_path)
+
+                # Detect removed downloads (were monitored but no longer in current tracked paths)
                 removed_paths = set(monitored_downloads.keys()) - current_paths
                 for removed_path in removed_paths:
                     track_id = monitored_downloads.pop(removed_path, None)
                     if track_id:
                         # Notify bridge to remove progress bar
                         self._remove_progress_tracking(track_id)
+                        self.log(f"[Hydra+: PROGRESS] Download removed: trackId={track_id}")
 
                 for virtual_path, transfer in transfers.items():
                     try:

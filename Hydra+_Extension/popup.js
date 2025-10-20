@@ -180,7 +180,7 @@ function loadConsoleEvents() {
 }
 
 // Clear console button
-clearConsoleBtn.addEventListener('click', () => {
+clearConsoleBtn.addEventListener('click', async () => {
   // Clear events array
   consoleEvents = [];
 
@@ -196,6 +196,16 @@ clearConsoleBtn.addEventListener('click', () => {
 
   // Clear storage (events and active downloads)
   safeStorageSet({ consoleEvents: [], activeDownloads: {} });
+
+  // Clear progress data from bridge server
+  try {
+    await fetch(`${BRIDGE_URL}/clear-progress`, {
+      method: 'POST',
+      mode: 'cors'
+    });
+  } catch (error) {
+    // Ignore if server is offline
+  }
 
   // Add a brief confirmation message that will be replaced by next event
   setTimeout(() => {
