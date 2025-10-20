@@ -33,6 +33,7 @@ const patternPreview = document.getElementById('patternPreview');
 const patternPreviewAlbum = document.getElementById('patternPreviewAlbum');
 const fileNamingContainer = document.getElementById('fileNamingContainer');
 const toggleFileNamingBtn = document.getElementById('toggleFileNamingBtn');
+const progressBarsContainer = document.getElementById('progressBarsContainer');
 
 // Console management
 const MAX_CONSOLE_ENTRIES = 50;
@@ -263,14 +264,15 @@ function loadActiveDownloads() {
   });
 }
 
-// Update progress bars in the console
+// Update vertical progress bars in the right container
 function updateProgressBars(activeDownloads) {
-  // Remove all existing progress bars first
-  const existingBars = consoleContent.querySelectorAll('.console-entry.console-progress');
-  existingBars.forEach(bar => bar.remove());
+  // Clear existing progress bars
+  progressBarsContainer.innerHTML = '';
 
-  // Add progress bar for each active download
+  // Add vertical progress bar for each active download
   const now = Date.now();
+  let hasActiveBars = false;
+
   for (const [trackId, progressData] of Object.entries(activeDownloads)) {
     const { filename, progress, bytesDownloaded, totalBytes, lastUpdate } = progressData;
 
@@ -279,46 +281,44 @@ function updateProgressBars(activeDownloads) {
       continue;
     }
 
-    // Create progress bar entry
-    const entry = document.createElement('div');
-    entry.className = 'console-entry console-progress';
-    entry.setAttribute('data-track-id', trackId);
+    hasActiveBars = true;
 
     // Get track color
     const trackColor = getTrackColor(trackId);
-    const colorDot = trackColor ? `<span class="track-color-dot" style="background-color: ${trackColor};"></span>` : '';
 
-    // Format bytes to MB
-    const mbDownloaded = (bytesDownloaded / 1024 / 1024).toFixed(1);
-    const mbTotal = (totalBytes / 1024 / 1024).toFixed(1);
+    // Create vertical progress bar
+    const barContainer = document.createElement('div');
+    barContainer.className = 'vertical-progress-bar';
+    barContainer.setAttribute('data-track-id', trackId);
+    barContainer.title = filename; // Tooltip shows full filename
 
-    // Truncate long filenames
-    const displayFilename = filename.length > 30 ? filename.substring(0, 27) + '...' : filename;
+    // Shorten filename for vertical display (first 10 chars)
+    const shortFilename = filename.length > 10 ? filename.substring(0, 10) + '...' : filename;
 
-    entry.innerHTML = `
-      <span class="console-time">${new Date().toLocaleTimeString('en-US', { hour12: false })}</span>
-      ${colorDot}
-      <div class="progress-container">
-        <div class="progress-filename" title="${filename}">${displayFilename}</div>
-        <div class="progress-bar-bg">
-          <div class="progress-bar-fill" style="width: ${progress}%; background-color: ${trackColor || '#B9FF37'};"></div>
-        </div>
-        <div class="progress-text">${mbDownloaded} MB / ${mbTotal} MB (${Math.round(progress)}%)</div>
+    barContainer.innerHTML = `
+      <div class="progress-track-dot" style="background-color: ${trackColor || '#B9FF37'};"></div>
+      <div class="progress-bar-vertical">
+        <div class="progress-bar-fill-vertical" style="height: ${progress}%; background-color: ${trackColor || '#B9FF37'};"></div>
       </div>
+      <div class="progress-percentage">${Math.round(progress)}%</div>
+      <div class="progress-filename-vertical">${shortFilename}</div>
     `;
 
-    // Insert progress bars at the end of console (before regular events)
-    consoleContent.appendChild(entry);
+    progressBarsContainer.appendChild(barContainer);
   }
 
-  // Auto-scroll to bottom
-  consoleContent.scrollTop = consoleContent.scrollHeight;
+  // If no active bars, hide the container to save space
+  if (!hasActiveBars) {
+    progressBarsContainer.style.display = 'none';
+  } else {
+    progressBarsContainer.style.display = 'flex';
+  }
 }
 
 // Clear all progress bars
 function clearProgressBars() {
-  const existingBars = consoleContent.querySelectorAll('.console-entry.console-progress');
-  existingBars.forEach(bar => bar.remove());
+  progressBarsContainer.innerHTML = '';
+  progressBarsContainer.style.display = 'none';
 }
 
 // Load active downloads on popup open

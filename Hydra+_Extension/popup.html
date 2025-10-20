@@ -508,51 +508,102 @@
       color: #6a9fb5;
     }
 
-    /* Progress bar styles */
-    .console-entry.console-progress {
-      flex-direction: row;
-      align-items: flex-start;
+    /* Console wrapper with progress bars on the right */
+    .console-wrapper {
+      display: flex;
+      gap: 8px;
+      min-height: 100px;
     }
 
-    .progress-container {
+    .console-content {
       flex: 1;
-      display: flex;
-      flex-direction: column;
-      gap: 4px;
       min-width: 0; /* Allow text truncation */
     }
 
-    .progress-filename {
-      font-size: 10px;
-      color: #b3b3b3;
-      white-space: nowrap;
-      overflow: hidden;
-      text-overflow: ellipsis;
-      font-weight: 500;
+    /* Vertical progress bars container */
+    .progress-bars-container {
+      display: flex;
+      gap: 6px;
+      align-items: flex-end;
+      padding: 8px;
+      min-width: 0;
     }
 
-    .progress-bar-bg {
-      width: 100%;
+    /* Individual vertical progress bar */
+    .vertical-progress-bar {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 4px;
+      width: 32px;
+      animation: slideInRight 0.3s ease;
+    }
+
+    @keyframes slideInRight {
+      from {
+        opacity: 0;
+        transform: translateX(10px);
+      }
+      to {
+        opacity: 1;
+        transform: translateX(0);
+      }
+    }
+
+    /* Track color dot at top */
+    .progress-track-dot {
+      width: 8px;
       height: 8px;
+      border-radius: 50%;
+      box-shadow: 0 0 6px currentColor;
+      flex-shrink: 0;
+    }
+
+    /* Vertical bar container */
+    .progress-bar-vertical {
+      width: 20px;
+      height: 80px;
       background: #282828;
-      border-radius: 4px;
-      overflow: hidden;
+      border-radius: 10px;
       border: 1px solid #1a1a1a;
       box-shadow: inset 1px 1px 2px #000000;
+      position: relative;
+      overflow: hidden;
+      display: flex;
+      flex-direction: column-reverse; /* Fill from bottom */
     }
 
-    .progress-bar-fill {
-      height: 100%;
+    /* Vertical fill (grows from bottom) */
+    .progress-bar-fill-vertical {
+      width: 100%;
       background: #B9FF37;
-      border-radius: 3px;
-      transition: width 0.3s ease;
-      box-shadow: 0 0 4px currentColor;
+      border-radius: 9px;
+      transition: height 0.3s ease;
+      box-shadow: 0 0 6px currentColor;
+      position: relative;
     }
 
-    .progress-text {
+    /* Percentage text below bar */
+    .progress-percentage {
       font-size: 9px;
-      color: #6a6a6a;
+      color: #b3b3b3;
       font-family: 'Courier New', monospace;
+      text-align: center;
+      font-weight: 600;
+    }
+
+    /* Filename below percentage (rotated or abbreviated) */
+    .progress-filename-vertical {
+      font-size: 7px;
+      color: #6a6a6a;
+      text-align: center;
+      max-width: 32px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      writing-mode: vertical-rl;
+      transform: rotate(180deg);
+      max-height: 60px;
     }
 
   </style>
@@ -607,10 +658,15 @@ $$$$$$$ ` $$$$$$ ;$$$$;  $$$$l$$$$;  $$$$;   $$$$     $$$$;   $$$$$$~  :$$$$$$$$
       </div>
     </div>
     <div id="consoleContainer" class="console-container">
-      <div id="consoleContent" class="console-content">
-        <div class="console-entry console-info">
-          <span class="console-time">--:--:--</span>
-          <span class="console-message">Waiting for events...</span>
+      <div class="console-wrapper">
+        <div id="consoleContent" class="console-content">
+          <div class="console-entry console-info">
+            <span class="console-time">--:--:--</span>
+            <span class="console-message">Waiting for events...</span>
+          </div>
+        </div>
+        <div id="progressBarsContainer" class="progress-bars-container">
+          <!-- Vertical progress bars will be inserted here -->
         </div>
       </div>
     </div>
