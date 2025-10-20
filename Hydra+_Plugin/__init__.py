@@ -5,10 +5,10 @@ Multi-headed Spotify → Soulseek bridge with intelligent auto-download.
 Connects to the bridge server to receive track searches from the browser
 extension and automatically triggers searches in Nicotine+.
 
-Version: 0.1.6
+Version: 0.1.7
 """
 
-__version__ = "0.1.6"
+__version__ = "0.1.7"
 
 from pynicotine.pluginsystem import BasePlugin
 from pynicotine.events import events
