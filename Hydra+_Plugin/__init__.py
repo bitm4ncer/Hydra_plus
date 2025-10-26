@@ -3843,7 +3843,7 @@ class Plugin(BasePlugin):
             else:
                 # Sleep mode: no activity for 5+ minutes
                 self.poll_mode = 'sleep'
-                self.current_poll_interval = 30
+                self.current_poll_interval = 15  # Max 15 seconds (reduced from 30)
 
             # Log mode changes
             if old_mode != self.poll_mode:

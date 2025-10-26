@@ -292,19 +292,30 @@ function loadConsoleEvents() {
           <span class="console-message"${trackIdAttr}>${event.message}</span>
         `;
         consoleContent.appendChild(entry);
+      });
 
-        // IMPORTANT: Process stored events to create progress bars when popup opens
-        // Check for Queued, Searching, and Downloading events
-        if (event.trackId) {
+      // IMPORTANT: Process stored events to create progress bars when popup opens
+      // Only create ONE bar per trackId (use latest relevant state)
+      const processedTrackIds = new Set();
+
+      // Process events in reverse order (newest first) to get latest state
+      for (let i = consoleEvents.length - 1; i >= 0; i--) {
+        const event = consoleEvents[i];
+
+        if (event.trackId && !processedTrackIds.has(event.trackId)) {
+          // Check for Queued, Searching, or Downloading events
           if (event.type === 'info' && event.message.startsWith('Queued:')) {
             createQueuedProgressBar(event.trackId, event.message);
+            processedTrackIds.add(event.trackId);
           } else if (event.type === 'info' && event.message.startsWith('Searching:')) {
             createSearchingProgressBar(event.trackId, event.message);
+            processedTrackIds.add(event.trackId);
           } else if (event.type === 'info' && event.message.startsWith('Downloading:')) {
             createInitialProgressBar(event.trackId, event.message);
+            processedTrackIds.add(event.trackId);
           }
         }
-      });
+      }
 
       console.log('[Hydra+ Popup] Rendered', consoleEvents.length, 'events to DOM');
 
