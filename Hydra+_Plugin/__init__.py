@@ -874,9 +874,9 @@ class Plugin(BasePlugin):
                                     cumulative_bytes += tracks_to_download[i].get('file_size', 0)
                             cumulative_bytes += bytes_downloaded
 
-                            self._send_progress_update(track_id, filename, progress, cumulative_bytes, total_album_bytes, artist, track_name, album_name, real_path, image_url)
+                            self._send_progress_update(track_id, filename, progress, cumulative_bytes, total_album_bytes, artist, track_name, album_name, '', image_url)
                         else:
-                            self._send_progress_update(track_id, filename, progress, bytes_downloaded, total_bytes, artist, track_name, album_name, real_path, image_url)
+                            self._send_progress_update(track_id, filename, progress, bytes_downloaded, total_bytes, artist, track_name, album_name, '', image_url)
 
                         # Log progress updates (reduced verbosity for albums)
                         if search_info and search_info.get('type') == 'album':
@@ -1451,6 +1451,80 @@ class Plugin(BasePlugin):
                 if token in self.active_searches:
                     del self.active_searches[token]
 
+    def _abort_transfer_by_path(self, virtual_path, username=None, remove_from_tracking=True):
+        """
+        Abort a download transfer by its virtual path.
+
+        Args:
+            virtual_path: Virtual path of the file to abort
+            username: Username (optional, for more precise matching)
+            remove_from_tracking: Whether to remove from active_downloads dict
+
+        Returns:
+            True if transfer was found and aborted, False otherwise
+        """
+        try:
+            # Find the transfer object
+            transfer_to_abort = None
+            if hasattr(self.core, 'downloads') and hasattr(self.core.downloads, 'transfers'):
+                for transfer in self.core.downloads.transfers.values():
+                    if hasattr(transfer, 'virtual_path') and transfer.virtual_path == virtual_path:
+                        transfer_to_abort = transfer
+                        self.debug_log(f"[ABORT] Found transfer to abort: {virtual_path[:60]}")
+                        break
+
+                if transfer_to_abort:
+                    # Try clear_downloads FIRST (cleanest removal)
+                    cleared = False
+                    if hasattr(self.core.downloads, 'clear_downloads'):
+                        try:
+                            self.core.downloads.clear_downloads([transfer_to_abort])
+                            self.debug_log(f"[ABORT] ✓ Cleared transfer via clear_downloads")
+                            cleared = True
+                        except Exception as e:
+                            self.debug_log(f"[ABORT] clear_downloads failed: {e}")
+
+                    # Try abort if clear failed
+                    if not cleared:
+                        if hasattr(self.core.downloads, 'abort_downloads'):
+                            try:
+                                self.core.downloads.abort_downloads([transfer_to_abort])
+                                self.debug_log(f"[ABORT] ✓ Aborted via abort_downloads")
+                            except Exception as e:
+                                self.debug_log(f"[ABORT] abort_downloads failed: {e}")
+                                # Try abort_transfer as last resort
+                                if hasattr(self.core.downloads, 'abort_transfer'):
+                                    try:
+                                        self.core.downloads.abort_transfer(transfer_to_abort)
+                                        self.debug_log(f"[ABORT] ✓ Aborted via abort_transfer")
+                                    except Exception as e2:
+                                        self.debug_log(f"[ABORT] abort_transfer also failed: {e2}")
+                        elif hasattr(self.core.downloads, 'abort_transfer'):
+                            try:
+                                self.core.downloads.abort_transfer(transfer_to_abort)
+                                self.debug_log(f"[ABORT] ✓ Aborted via abort_transfer")
+                            except Exception as e:
+                                self.debug_log(f"[ABORT] abort_transfer failed: {e}")
+
+                    # Remove from tracking if requested
+                    if remove_from_tracking:
+                        transfer_key = (username + virtual_path) if username else virtual_path
+                        if transfer_key in self.active_downloads:
+                            del self.active_downloads[transfer_key]
+                            self.debug_log(f"[ABORT] Removed from tracking")
+
+                    return True
+                else:
+                    self.debug_log(f"[ABORT] Transfer not found (may have completed/aborted already)")
+                    return False
+            else:
+                self.debug_log(f"[ABORT] downloads.transfers not available")
+                return False
+
+        except Exception as e:
+            self.debug_log(f"[ABORT] Error aborting transfer: {e}")
+            return False
+
     def _try_next_download_candidate(self, token, search_info, reason):
         """
         Try the next download candidate after a failure.
@@ -1470,78 +1544,11 @@ class Plugin(BasePlugin):
         self._send_event_to_bridge('warning', f"Retrying: {search_info.get('artist', '')} - {search_info.get('track', '')} ({reason})", track_id_safe)
 
         # Remove failed download from tracking and abort it from Nicotine+ queue
-        if search_info.get('last_download_path') and search_info['last_download_path'] in self.active_downloads:
+        if search_info.get('last_download_path'):
             virtual_path = search_info['last_download_path']
             username = search_info.get('last_download_user')
-            self.log(f"[DL] Attempting to abort: {virtual_path}")
-            self.log(f"[DL] Username: {username}")
-
-            # Find the transfer object and try to abort it
-            transfer_to_abort = None
-            if hasattr(self.core, 'downloads') and hasattr(self.core.downloads, 'transfers'):
-                transfer_count = len(self.core.downloads.transfers)
-                self.log(f"[DL] Checking {transfer_count} transfers...")
-
-                for transfer in self.core.downloads.transfers.values():
-                    if hasattr(transfer, 'virtual_path') and transfer.virtual_path == virtual_path:
-                        transfer_to_abort = transfer
-                        self.log(f"[DL] Found transfer in queue")
-                        break
-
-                if transfer_to_abort:
-                    # Try clear_downloads FIRST (before aborting, while transfer is still valid)
-                    # If this works, we don't need to abort since it's already removed
-                    cleared = False
-                    if hasattr(self.core.downloads, 'clear_downloads'):
-                        try:
-                            self.log(f"[DL] Calling clear_downloads to remove from UI...")
-                            self.core.downloads.clear_downloads([transfer_to_abort])
-                            self.log(f"[DL] Called clear_downloads successfully")
-                            cleared = True
-                        except Exception as e:
-                            self.log(f"[DL] clear_downloads failed: {e}")
-                            import traceback
-                            self.log(f"[DL] {traceback.format_exc()}")
-
-                    # Only try abort if clear failed or isn't available
-                    if not cleared:
-                        if hasattr(self.core.downloads, 'abort_downloads'):
-                            try:
-                                self.log(f"[DL] Calling abort_downloads with Transfer object...")
-                                self.core.downloads.abort_downloads([transfer_to_abort])
-                                self.log(f"[DL] Called abort_downloads successfully")
-                            except Exception as e:
-                                self.log(f"[DL] abort_downloads failed: {e}")
-                                # Try abort_transfer as last resort
-                                if hasattr(self.core.downloads, 'abort_transfer'):
-                                    try:
-                                        self.log(f"[DL] Trying abort_transfer instead...")
-                                        self.core.downloads.abort_transfer(transfer_to_abort)
-                                        self.log(f"[DL] Called abort_transfer successfully")
-                                    except Exception as e2:
-                                        self.log(f"[DL] abort_transfer also failed: {e2}")
-                        elif hasattr(self.core.downloads, 'abort_transfer'):
-                            try:
-                                self.log(f"[DL] Calling abort_transfer...")
-                                self.core.downloads.abort_transfer(transfer_to_abort)
-                                self.log(f"[DL] Called abort_transfer successfully")
-                            except Exception as e:
-                                self.log(f"[DL] abort_transfer failed: {e}")
-
-                    # List available methods for debugging (only on first abort attempt)
-                    if not hasattr(self, '_abort_methods_logged'):
-                        methods = [m for m in dir(self.core.downloads) if not m.startswith('_') and ('abort' in m.lower() or 'clear' in m.lower() or 'remove' in m.lower() or 'cancel' in m.lower())]
-                        if methods:
-                            self.log(f"[DL] Available abort/clear/remove methods: {', '.join(methods)}")
-                        self._abort_methods_logged = True
-                else:
-                    self.log(f"[DL] Transfer not found in transfers dict (may have been removed)")
-            else:
-                self.log(f"[DL] downloads.transfers not available")
-
-            # Remove from tracking
-            del self.active_downloads[virtual_path]
-            self.log(f"[DL] Removed from tracking dict")
+            self.log(f"[DL] Aborting failed download: {virtual_path[:60]}")
+            self._abort_transfer_by_path(virtual_path, username, remove_from_tracking=True)
 
         # Try next candidate (logging happens in _try_download_candidate)
         self._try_download_candidate(token, search_info, next_attempt, f"Trying next candidate")
@@ -2292,6 +2299,35 @@ class Plugin(BasePlugin):
             if transfer_key in self.active_downloads:
                 del self.active_downloads[transfer_key]
                 self.debug_log(f"[PROGRESS] Removed from tracking: {filename[:40]}")
+
+            # CLEANUP: Abort any other parallel download attempts for this track
+            # When one candidate succeeds (e.g., HEAD2), abort any other attempts (HEAD1, HEAD3, etc.)
+            # This prevents duplicate downloads and keeps the UI clean
+            candidates = search_info.get('download_candidates', [])
+            current_attempt = search_info.get('current_attempt', 0)
+
+            if len(candidates) > 1:  # Only if there were multiple candidates
+                self.debug_log(f"[CLEANUP] Download succeeded (HEAD{current_attempt + 1}), aborting other attempts...")
+                aborted_count = 0
+
+                for i, candidate in enumerate(candidates):
+                    # Skip the successful download
+                    if i == current_attempt:
+                        continue
+
+                    # Abort other attempts
+                    other_virtual_path = candidate['file']
+                    other_username = candidate['user']
+
+                    # Check if this download is still active
+                    other_transfer_key = other_username + other_virtual_path
+                    if other_transfer_key in self.active_downloads:
+                        self.debug_log(f"[CLEANUP] Aborting HEAD{i + 1}: {other_virtual_path[:60]}")
+                        if self._abort_transfer_by_path(other_virtual_path, other_username, remove_from_tracking=True):
+                            aborted_count += 1
+
+                if aborted_count > 0:
+                    self.log(f"[CLEANUP] ✓ Aborted {aborted_count} parallel download(s)")
 
             # Send event to bridge for popup console
             self._send_event_to_bridge('success', f"Downloaded: {filename}", track_id_safe)

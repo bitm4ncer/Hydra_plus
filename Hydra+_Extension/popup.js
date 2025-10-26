@@ -46,6 +46,9 @@ const debugWindowsToggle = document.getElementById('debugWindowsToggle');
 const MAX_CONSOLE_ENTRIES = 50;
 let consoleEvents = [];
 
+// Track bars being created to prevent race conditions
+const barsBeingCreated = new Set();
+
 // Helper to safely call chrome.storage (handles extension context invalidation)
 function safeStorageSet(data, callback) {
   try {
@@ -201,15 +204,9 @@ function loadConsoleEvents() {
         `;
         consoleContent.appendChild(entry);
 
-        // IMPORTANT: Create searching progress bars for "Searching:" events
-        if (event.type === 'info' && event.message.startsWith('Searching:') && event.trackId) {
-          createSearchingProgressBar(event.trackId, event.message);
-        }
-
-        // IMPORTANT: Create initial progress bars for "Downloading:" events
-        if (event.type === 'info' && event.message.startsWith('Downloading:') && event.trackId) {
-          createInitialProgressBar(event.trackId, event.message);
-        }
+        // NOTE: Don't create progress bars here - they're created in addConsoleEvent()
+        // This function is called when loading from storage (can be called multiple times)
+        // Creating bars here would cause duplicates on every storage change
       });
 
       console.log('[Hydra+ Popup] Rendered', consoleEvents.length, 'events to DOM');
@@ -451,12 +448,15 @@ function addFolderClickHandler(barContainer) {
 async function createSearchingProgressBar(trackId, message) {
   console.log('[Hydra+ PROGRESS] 🔍 Creating searching bar for trackId:', trackId);
 
-  // Check if bar already exists
+  // Check if bar already exists OR is being created
   const existingBar = progressBarsArea.querySelector(`[data-track-id="${trackId}"]`);
-  if (existingBar) {
-    console.log('[Hydra+ PROGRESS] Bar already exists for:', trackId);
+  if (existingBar || barsBeingCreated.has(trackId)) {
+    console.log('[Hydra+ PROGRESS] Bar already exists or is being created for:', trackId);
     return; // Don't create duplicate
   }
+
+  // Mark this bar as being created
+  barsBeingCreated.add(trackId);
 
   // Extract search info from message (e.g., "Searching: Artist - Track")
   const searchInfo = message.replace('Searching:', '').trim();
@@ -546,6 +546,9 @@ async function createSearchingProgressBar(trackId, message) {
     completedAt: null
   });
 
+  // Remove from "being created" set
+  barsBeingCreated.delete(trackId);
+
   console.log('[Hydra+ PROGRESS] ✓ Searching bar created at 5% (50% opacity) for:', searchInfo.substring(0, 30));
 }
 
@@ -556,16 +559,25 @@ function createInitialProgressBar(trackId, message) {
   // Extract filename from message (e.g., "Downloading: Artist - Track (MP3)")
   const filename = message.replace('Downloading:', '').trim();
 
-  // Check if bar already exists (from searching state)
+  // CRITICAL: Check if bar already exists for this trackId
+  // This handles retries (HEAD1, HEAD2, HEAD3) which reuse the same trackId
   let barContainer = progressBarsArea.querySelector(`[data-track-id="${trackId}"]`);
 
-  if (barContainer) {
-    // BAR EXISTS - Transition from SEARCHING to DOWNLOADING
-    console.log('[Hydra+ PROGRESS] Transitioning existing bar to downloading state');
+  // Also check if bar is currently being created
+  if (barsBeingCreated.has(trackId)) {
+    console.log('[Hydra+ PROGRESS] Bar is being created, will update when ready');
+    return;
+  }
 
-    // Remove searching state, add downloading state
+  // If bar exists (either in SEARCHING or DOWNLOADING state), reuse it
+  if (barContainer) {
+    console.log('[Hydra+ PROGRESS] Reusing existing bar (retry or state transition)');
+
+    // Remove searching state, ensure downloading state
     barContainer.classList.remove('state-searching');
-    barContainer.classList.add('state-downloading');
+    if (!barContainer.classList.contains('state-downloading')) {
+      barContainer.classList.add('state-downloading');
+    }
 
     // Update tooltip
     const tooltip = barContainer.querySelector('.progress-bar-tooltip');
@@ -577,54 +589,63 @@ function createInitialProgressBar(trackId, message) {
     const existingState = progressBarStates.get(trackId);
     if (existingState) {
       existingState.state = PROGRESS_BAR_STATES.DOWNLOADING;
+      // Reset progress to 5% for retry attempts (don't leave at old partial progress)
+      existingState.progress = 5;
       progressBarStates.set(trackId, existingState);
+
+      // Also reset the fill element to 5%
+      const fill = barContainer.querySelector('.progress-bar-fill-vertical');
+      if (fill) {
+        fill.style.height = '5%';
+      }
     }
 
-    console.log('[Hydra+ PROGRESS] ✓ Bar transitioned to downloading (100% opacity)');
-  } else {
-    // BAR DOESN'T EXIST - Create new bar directly in downloading state
-    console.log('[Hydra+ PROGRESS] Creating new bar in downloading state');
-
-    // Get track color
-    const trackColor = getTrackColor(trackId);
-
-    // Create new vertical bar at 5% height with 100% opacity
-    barContainer = document.createElement('div');
-    barContainer.className = 'vertical-progress-bar state-downloading';
-    barContainer.setAttribute('data-track-id', trackId);
-    barContainer.setAttribute('data-artist', '');
-    barContainer.setAttribute('data-track', '');
-    barContainer.setAttribute('data-album', '');
-
-    // Add hover listener to show track info in header
-    addTrackInfoHover(barContainer);
-
-    // Add click handler for folder opening
-    addFolderClickHandler(barContainer);
-
-    // Create the fill element at 5% height
-    const fill = document.createElement('div');
-    fill.className = 'progress-bar-fill-vertical';
-    fill.style.height = '5%'; // Start at 5%
-    fill.style.backgroundColor = trackColor || '#B9FF37';
-
-    barContainer.appendChild(fill);
-    progressBarsArea.appendChild(barContainer);
-
-    // Store state
-    progressBarStates.set(trackId, {
-      state: PROGRESS_BAR_STATES.DOWNLOADING,
-      artist: '',
-      track: '',
-      album: '',
-      filePath: '',
-      progress: 5,
-      createdAt: Date.now(),
-      completedAt: null
-    });
-
-    console.log('[Hydra+ PROGRESS] ✓ New downloading bar created at 5% (100% opacity):', filename.substring(0, 30));
+    console.log('[Hydra+ PROGRESS] ✓ Bar reused and reset to 5% for new download attempt');
+    return; // CRITICAL: Return here to prevent creating new bar below
   }
+
+  // BAR DOESN'T EXIST - Create new bar directly in downloading state
+  console.log('[Hydra+ PROGRESS] Creating new bar in downloading state');
+
+  // Get track color
+  const trackColor = getTrackColor(trackId);
+
+  // Create new vertical bar at 5% height with 100% opacity
+  barContainer = document.createElement('div');
+  barContainer.className = 'vertical-progress-bar state-downloading';
+  barContainer.setAttribute('data-track-id', trackId);
+  barContainer.setAttribute('data-artist', '');
+  barContainer.setAttribute('data-track', '');
+  barContainer.setAttribute('data-album', '');
+
+  // Add hover listener to show track info in header
+  addTrackInfoHover(barContainer);
+
+  // Add click handler for folder opening
+  addFolderClickHandler(barContainer);
+
+  // Create the fill element at 5% height
+  const fill = document.createElement('div');
+  fill.className = 'progress-bar-fill-vertical';
+  fill.style.height = '5%'; // Start at 5%
+  fill.style.backgroundColor = trackColor || '#B9FF37';
+
+  barContainer.appendChild(fill);
+  progressBarsArea.appendChild(barContainer);
+
+  // Store state
+  progressBarStates.set(trackId, {
+    state: PROGRESS_BAR_STATES.DOWNLOADING,
+    artist: '',
+    track: '',
+    album: '',
+    filePath: '',
+    progress: 5,
+    createdAt: Date.now(),
+    completedAt: null
+  });
+
+  console.log('[Hydra+ PROGRESS] ✓ New downloading bar created at 5% (100% opacity):', filename.substring(0, 30));
 }
 
 // Store completed downloads persistently (moved from completionTimes)
@@ -872,10 +893,10 @@ function clearProgressBars() {
 // Load active downloads on popup open
 loadActiveDownloads();
 
-// Poll for progress updates every 2 seconds
+// Poll for progress updates every 0.5 seconds for smooth animation
 setInterval(() => {
   loadActiveDownloads();
-}, 2000);
+}, 500);
 
 // Add mouseleave listener to clear track info when mouse leaves progress bars
 progressBarsContainer.addEventListener('mouseleave', () => {
