@@ -374,13 +374,13 @@ function addTrackInfoHover(barContainer) {
     const album = barContainer.getAttribute('data-album') || '';
     const trackId = barContainer.getAttribute('data-track-id');
     const imageUrl = barContainer.getAttribute('data-image-url') || '';
+    const trackColor = barContainer.getAttribute('data-track-color') || '#B9FF37';
 
     const trackInfo = generateTooltipText(artist, track, album);
-    const accentColor = '#B9FF37';
 
-    // Show track info with color code in tooltip
-    currentTrackInfo.textContent = trackInfo + ' (' + accentColor + ')';
-    currentTrackInfo.style.color = accentColor;
+    // Show track info with unique color code in tooltip
+    currentTrackInfo.textContent = trackInfo + ' (' + trackColor + ')';
+    currentTrackInfo.style.color = trackColor;
 
     // Show album artwork thumbnail if available
     if (imageUrl) {
@@ -503,13 +503,14 @@ async function createSearchingProgressBar(trackId, message) {
     }
   }
 
-  // All bars use accent green color
-  const accentColor = '#B9FF37';
+  // Get unique track color (matches console log color)
+  const trackColor = getTrackColor(trackId);
 
   // Create new vertical bar at 5% height with 50% opacity
   const barContainer = document.createElement('div');
   barContainer.className = 'vertical-progress-bar state-searching'; // Add searching state class
   barContainer.setAttribute('data-track-id', trackId);
+  barContainer.setAttribute('data-track-color', trackColor); // Store color for hover tooltip
   barContainer.setAttribute('data-artist', artist);
   barContainer.setAttribute('data-track', track);
   barContainer.setAttribute('data-album', '');
@@ -529,7 +530,7 @@ async function createSearchingProgressBar(trackId, message) {
   const fill = document.createElement('div');
   fill.className = 'progress-bar-fill-vertical';
   fill.style.height = '5%'; // Start at 5%
-  fill.style.backgroundColor = accentColor;
+  fill.style.backgroundColor = trackColor || '#B9FF37';
 
   barContainer.appendChild(fill);
   progressBarsArea.appendChild(barContainer);
@@ -608,13 +609,14 @@ function createInitialProgressBar(trackId, message) {
   // BAR DOESN'T EXIST - Create new bar directly in downloading state
   console.log('[Hydra+ PROGRESS] Creating new bar in downloading state');
 
-  // All bars use accent green color
-  const accentColor = '#B9FF37';
+  // Get unique track color (matches console log color)
+  const trackColor = getTrackColor(trackId);
 
   // Create new vertical bar at 5% height with 100% opacity
   barContainer = document.createElement('div');
   barContainer.className = 'vertical-progress-bar state-downloading';
   barContainer.setAttribute('data-track-id', trackId);
+  barContainer.setAttribute('data-track-color', trackColor); // Store color for hover tooltip
   barContainer.setAttribute('data-artist', '');
   barContainer.setAttribute('data-track', '');
   barContainer.setAttribute('data-album', '');
@@ -629,7 +631,7 @@ function createInitialProgressBar(trackId, message) {
   const fill = document.createElement('div');
   fill.className = 'progress-bar-fill-vertical';
   fill.style.height = '5%'; // Start at 5%
-  fill.style.backgroundColor = accentColor;
+  fill.style.backgroundColor = trackColor || '#B9FF37';
 
   barContainer.appendChild(fill);
   progressBarsArea.appendChild(barContainer);
@@ -778,8 +780,8 @@ function updateProgressBars(activeDownloads) {
       console.log('[Hydra+ PROGRESS] Metadata for', trackId.substring(0, 10), ':', { artist, track, album, imageUrl: imageUrl || '(none)' });
     }
 
-    // All bars use accent green color
-    const accentColor = '#B9FF37';
+    // Get unique track color (matches console log color)
+    const trackColor = getTrackColor(trackId);
 
     // Generate tooltip text from metadata
     const tooltipText = generateTooltipText(artist, track, album);
@@ -794,6 +796,7 @@ function updateProgressBars(activeDownloads) {
       barContainer = document.createElement('div');
       barContainer.className = `vertical-progress-bar state-${state.state}`;
       barContainer.setAttribute('data-track-id', trackId);
+      barContainer.setAttribute('data-track-color', trackColor); // Store color for hover tooltip
       barContainer.setAttribute('data-artist', artist || '');
       barContainer.setAttribute('data-track', track || '');
       barContainer.setAttribute('data-album', album || '');
@@ -820,7 +823,7 @@ function updateProgressBars(activeDownloads) {
       // Ensure minimum visibility (5% minimum)
       const displayProgress = Math.max(5, progress);
       fill.style.height = `${displayProgress}%`;
-      fill.style.backgroundColor = accentColor;
+      fill.style.backgroundColor = trackColor || '#B9FF37';
 
       // Add completed class if already at 100%
       if (isComplete) {
@@ -867,7 +870,7 @@ function updateProgressBars(activeDownloads) {
         // Ensure minimum visibility (5% minimum)
         const displayProgress = Math.max(5, progress);
         fill.style.height = `${displayProgress}%`;
-        fill.style.backgroundColor = accentColor;
+        fill.style.backgroundColor = trackColor || '#B9FF37';
 
         // Add completed class when reaching 100%
         if (isComplete) {
