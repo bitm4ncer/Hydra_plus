@@ -184,7 +184,9 @@ function addConsoleEvent(type, message, timestamp = null, trackId = null) {
     'Bridge server connected',
     'Bridge server disconnected',
     'Debug mode enabled - restart required',
-    'Debug mode disabled - restart required'
+    'Debug mode disabled - restart required',
+    '🐛 Debug mode enabled - restart required',
+    '🐛 Debug mode disabled - restart required'
   ];
 
   if (spamMessages.includes(message)) {
