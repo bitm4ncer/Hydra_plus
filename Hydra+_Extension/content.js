@@ -316,6 +316,22 @@ async function sendToNicotine(trackInfo) {
 
   console.log('[Nicotine+] Final Image URL:', imageUrl || '(none)');
 
+  // IMMEDIATE FEEDBACK: Send "Queued" event before search request
+  // This creates the progress bar instantly when button is clicked
+  try {
+    await fetch(`${BRIDGE_URL}/event`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        type: 'info',
+        message: `Queued: ${trackInfo.artistName} - ${trackInfo.trackName}`,
+        trackId: trackInfo.trackId
+      })
+    });
+  } catch (error) {
+    console.log('[Nicotine+] Failed to send queued event (non-critical):', error);
+  }
+
   try {
     const response = await fetch(BRIDGE_URL, {
       method: 'POST',

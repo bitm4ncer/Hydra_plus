@@ -681,6 +681,12 @@
 
     /* State-based opacity for visual feedback */
 
+    /* Queued state - 0% height (hidden), created immediately on button click */
+    .vertical-progress-bar.state-queued .progress-bar-fill-vertical {
+      opacity: 0;
+      height: 0% !important; /* Completely hidden until search starts */
+    }
+
     /* Searching state - 50% opacity to indicate waiting */
     .vertical-progress-bar.state-searching .progress-bar-fill-vertical {
       opacity: 0.5;

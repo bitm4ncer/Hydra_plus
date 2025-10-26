@@ -152,7 +152,13 @@ function addConsoleEvent(type, message, timestamp = null, trackId = null) {
   // Auto-scroll to bottom
   consoleContent.scrollTop = consoleContent.scrollHeight;
 
-  // IMPORTANT: Detect "Searching:" events and create progress bar in searching state
+  // IMMEDIATE FEEDBACK: Detect "Queued:" events and create hidden progress bar (0% height)
+  if (type === 'info' && message.startsWith('Queued:') && trackId) {
+    console.log('[Hydra+ PROGRESS] 📥 Queued event detected for trackId:', trackId);
+    createQueuedProgressBar(trackId, message);
+  }
+
+  // IMPORTANT: Detect "Searching:" events and transition to searching state
   if (type === 'info' && message.startsWith('Searching:') && trackId) {
     console.log('[Hydra+ PROGRESS] 🔍 Searching event detected for trackId:', trackId);
     createSearchingProgressBar(trackId, message);
@@ -446,15 +452,115 @@ function addFolderClickHandler(barContainer) {
   });
 }
 
-// Create progress bar in SEARCHING state (50% opacity)
-async function createSearchingProgressBar(trackId, message) {
-  console.log('[Hydra+ PROGRESS] 🔍 Creating searching bar for trackId:', trackId);
+// Create progress bar in QUEUED state (0% height, hidden until search starts)
+function createQueuedProgressBar(trackId, message) {
+  console.log('[Hydra+ PROGRESS] 📥 Creating queued bar for trackId:', trackId);
 
   // Check if bar already exists OR is being created
   const existingBar = progressBarsArea.querySelector(`[data-track-id="${trackId}"]`);
   if (existingBar || barsBeingCreated.has(trackId)) {
     console.log('[Hydra+ PROGRESS] Bar already exists or is being created for:', trackId);
     return; // Don't create duplicate
+  }
+
+  // Mark this bar as being created
+  barsBeingCreated.add(trackId);
+
+  // Extract info from message (e.g., "Queued: Artist - Track")
+  const queuedInfo = message.replace('Queued:', '').trim();
+
+  // Try to parse artist and track from queuedInfo (format: "Artist - Track")
+  let artist = '';
+  let track = '';
+  if (queuedInfo.includes(' - ')) {
+    const parts = queuedInfo.split(' - ');
+    artist = parts[0].trim();
+    track = parts[1].trim();
+  }
+
+  console.log('[Hydra+ PROGRESS] Parsed queued info:', { artist, track, queuedInfo });
+
+  // Get unique track color (matches console log color)
+  const trackColor = getTrackColor(trackId);
+
+  // Create new vertical bar at 0% height (completely hidden but present)
+  const barContainer = document.createElement('div');
+  barContainer.className = 'vertical-progress-bar state-queued'; // Add queued state class
+  barContainer.setAttribute('data-track-id', trackId);
+  barContainer.setAttribute('data-track-color', trackColor); // Store color for hover tooltip
+  barContainer.setAttribute('data-artist', artist);
+  barContainer.setAttribute('data-track', track);
+  barContainer.setAttribute('data-album', '');
+
+  // Add hover listener to show track info in header
+  addTrackInfoHover(barContainer);
+
+  // Add click handler for folder opening
+  addFolderClickHandler(barContainer);
+
+  // Create the fill element at 0% height (completely hidden)
+  const fill = document.createElement('div');
+  fill.className = 'progress-bar-fill-vertical';
+  fill.style.height = '0%'; // Start at 0% (hidden)
+  fill.style.backgroundColor = trackColor || '#B9FF37';
+
+  barContainer.appendChild(fill);
+  progressBarsArea.appendChild(barContainer);
+
+  // Store state with parsed artist/track
+  progressBarStates.set(trackId, {
+    state: 'queued',
+    artist: artist,
+    track: track,
+    album: '',
+    filePath: '',
+    imageUrl: '',
+    progress: 0,
+    createdAt: Date.now(),
+    completedAt: null
+  });
+
+  // Remove from "being created" set
+  barsBeingCreated.delete(trackId);
+
+  console.log('[Hydra+ PROGRESS] ✓ Queued bar created at 0% (hidden) for:', queuedInfo.substring(0, 30));
+}
+
+// Transition progress bar to SEARCHING state (5% height, 50% opacity)
+async function createSearchingProgressBar(trackId, message) {
+  console.log('[Hydra+ PROGRESS] 🔍 Transitioning to searching state for trackId:', trackId);
+
+  // Check if bar already exists (from queued state)
+  let existingBar = progressBarsArea.querySelector(`[data-track-id="${trackId}"]`);
+
+  if (existingBar) {
+    // Bar exists (queued state) - transition to searching state
+    console.log('[Hydra+ PROGRESS] Transitioning existing queued bar to searching state');
+    existingBar.classList.remove('state-queued');
+    existingBar.classList.add('state-searching');
+
+    // Update fill to 5% height
+    const fill = existingBar.querySelector('.progress-bar-fill-vertical');
+    if (fill) {
+      fill.style.height = '5%';
+    }
+
+    // Update state tracking
+    const existingState = progressBarStates.get(trackId);
+    if (existingState) {
+      existingState.state = PROGRESS_BAR_STATES.SEARCHING;
+      existingState.progress = 5;
+      progressBarStates.set(trackId, existingState);
+    }
+
+    console.log('[Hydra+ PROGRESS] ✓ Transitioned to searching state (5%, 50% opacity)');
+    return;
+  }
+
+  // Check if bar is being created
+  if (barsBeingCreated.has(trackId)) {
+    console.log('[Hydra+ PROGRESS] Bar is being created, waiting...');
+    return;
   }
 
   // Mark this bar as being created
