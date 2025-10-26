@@ -41,6 +41,7 @@ const albumArtThumbnail = document.getElementById('albumArtThumbnail');
 const downloadMetadataSettings = document.getElementById('downloadMetadataSettings');
 const toggleDownloadMetadataBtn = document.getElementById('toggleDownloadMetadataBtn');
 const debugWindowsToggle = document.getElementById('debugWindowsToggle');
+const undockBtn = document.getElementById('undockBtn');
 
 // Console management
 const MAX_CONSOLE_ENTRIES = 50;
@@ -1686,3 +1687,40 @@ albumTrackPattern.addEventListener('input', () => {
 
 // Load patterns on startup
 loadPatterns();
+
+// ===== UNDOCK BUTTON HANDLER =====
+
+// Detect if we're in a popup window (not the extension popup)
+// If opened via chrome.windows.create(), hide the undock button
+chrome.windows.getCurrent((currentWindow) => {
+  // Extension popup has type 'popup' but a smaller ID
+  // Undocked windows also have type 'popup' but are created programmatically
+  // We can detect by checking if we're in a full browser window context
+  if (currentWindow.type === 'popup' && currentWindow.id > 1000) {
+    // We're in an undocked window, hide the button
+    undockBtn.style.display = 'none';
+    console.log('[Hydra+ Popup] Running in undocked window - hiding undock button');
+  } else {
+    console.log('[Hydra+ Popup] Running in extension popup - showing undock button');
+  }
+});
+
+// Undock popup into a persistent window
+undockBtn.addEventListener('click', () => {
+  console.log('[Hydra+ Popup] Undocking to new window');
+
+  // Create new popup window with same content
+  chrome.windows.create({
+    url: 'popup.html',
+    type: 'popup',
+    width: 297,
+    height: 700,
+    focused: true
+  }, (window) => {
+    console.log('[Hydra+ Popup] Undocked window created:', window.id);
+  });
+
+  // Note: Don't close the popup automatically - let user decide
+  // If user wants auto-close behavior, uncomment:
+  // window.close();
+});
