@@ -521,7 +521,7 @@
       border-radius: 6px;
       border: 1px solid #121212;
       box-shadow: inset 1px 1px 3px #000000, 0 1px 0 #474747;
-      overflow: hidden;
+      overflow: visible; /* Changed from hidden to allow tooltips to show */
       display: flex;
       flex-direction: column;
     }
@@ -542,10 +542,13 @@
       flex-direction: row;
       gap: 6px;
       padding: 8px;
-      height: 44px; /* 60px total - 16px header = 44px for bars */
+      padding-top: 8px; /* Extra padding at top for tooltips */
+      height: 64px; /* Increased from 44px to 64px for tooltip space */
       align-items: flex-end;
       justify-content: flex-start;
       flex-shrink: 0;
+      overflow-x: auto; /* Allow horizontal scrolling if many bars */
+      overflow-y: visible; /* Allow tooltips to show above */
     }
 
     /* Individual vertical progress bar - grows from bottom */
@@ -582,38 +585,44 @@
       min-height: 5%; /* Minimal height when starting (5% of container) */
     }
 
-    /* Hover effect to show filename tooltip */
-    .vertical-progress-bar:hover {
-    
+
+    /* Click feedback animation */
+    .vertical-progress-bar.click-feedback {
+      animation: clickFlash 0.3s ease;
     }
 
-    .vertical-progress-bar:hover .progress-bar-fill-vertical {
-     
+    @keyframes clickFlash {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.5; }
     }
 
-    /* Completion state - pulse glow effect */
+    /* Completion state - no animation */
     .vertical-progress-bar.completed .progress-bar-fill-vertical {
-   
-      
+      /* Glow effect removed per user request */
     }
 
-    @keyframes completePulse {
-      0% {
-        box-shadow: 0 0 0 rgba(185, 255, 55, 0);
-      }
-      50% {
-        box-shadow: 0 0 12px rgba(185, 255, 55, 1);
-      }
-      100% {
-        box-shadow: 0 0 8px rgba(185, 255, 55, 0.8);
-      }
+    /* State-based opacity for visual feedback */
+
+    /* Searching state - 50% opacity to indicate waiting */
+    .vertical-progress-bar.state-searching .progress-bar-fill-vertical {
+      opacity: 0.5;
+    }
+
+    /* Downloading state - 100% opacity to indicate active download */
+    .vertical-progress-bar.state-downloading .progress-bar-fill-vertical {
+      opacity: 1;
+    }
+
+    /* Completed state - 100% opacity, no special effects */
+    .vertical-progress-bar.state-completed .progress-bar-fill-vertical {
+      opacity: 1;
     }
 
   </style>
 </head>
 <body>
   <div class="header">
-    <h3 class="version">v0.1.8</h3>
+    <h3 class="version">v0.1.9</h3>
     <div class="ascii-art">
       
       
@@ -651,6 +660,7 @@ $$$$$$$ ` $$$$$$ ;$$$$;  $$$$l$$$$;  $$$$;   $$$$     $$$$;   $$$$$$~  :$$$$$$$$
   <div id="progressSection" class="progress-section" style="margin-top: 16px;">
     <div class="progress-header">
       <span style="font-size: 10px; color: #6a6a6a; font-weight: 500;">DOWNLOADS</span>
+      <span id="currentTrackInfo" style="font-size: 10px; color: #B9FF37; font-weight: 400; font-family: 'Courier New', monospace;"></span>
     </div>
     <div id="progressBarsContainer" class="progress-bars-container">
       <!-- Vertical progress bars will be inserted here -->

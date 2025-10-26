@@ -5,10 +5,10 @@ Multi-headed Spotify → Soulseek bridge with intelligent auto-download.
 Connects to the bridge server to receive track searches from the browser
 extension and automatically triggers searches in Nicotine+.
 
-Version: 0.1.8
+Version: 0.1.9
 """
 
-__version__ = "0.1.8"
+__version__ = "0.1.9"
 
 from pynicotine.pluginsystem import BasePlugin
 from pynicotine.events import events
@@ -660,7 +660,7 @@ class Plugin(BasePlugin):
             # Bridge might be restarting or offline temporarily
             return False
 
-    def _send_progress_update(self, track_id, filename, progress, bytes_downloaded, total_bytes):
+    def _send_progress_update(self, track_id, filename, progress, bytes_downloaded, total_bytes, artist='', track='', album='', file_path=''):
         """Send download progress update to bridge server (fire-and-forget).
 
         Args:
@@ -669,6 +669,10 @@ class Plugin(BasePlugin):
             progress: Progress percentage (0-100)
             bytes_downloaded: Bytes downloaded so far
             total_bytes: Total file size in bytes
+            artist: Artist name (for tooltip display)
+            track: Track title (for tooltip display)
+            album: Album name (for tooltip display)
+            file_path: Full path to file (for folder opening)
         """
         try:
             import json
@@ -682,7 +686,11 @@ class Plugin(BasePlugin):
                 'filename': filename,
                 'progress': progress,
                 'bytesDownloaded': bytes_downloaded,
-                'totalBytes': total_bytes
+                'totalBytes': total_bytes,
+                'artist': artist,
+                'track': track,
+                'album': album,
+                'filePath': file_path
             }
 
             req = Request(url,
@@ -844,6 +852,11 @@ class Plugin(BasePlugin):
                         monitored_downloads[virtual_path] = track_id
 
                         # Send progress update to bridge
+                        # Extract metadata for tooltip display
+                        artist = search_info.get('artist', '') if search_info else ''
+                        track_name = search_info.get('track', '') if search_info else ''
+                        album_name = search_info.get('album', '') if search_info else ''
+
                         # For albums, send cumulative bytes instead of current track bytes
                         if search_info and search_info.get('type') == 'album' and 'album_track_id' in search_info:
                             completed_tracks = search_info.get('completed_track_count', 0)
@@ -857,9 +870,9 @@ class Plugin(BasePlugin):
                                     cumulative_bytes += tracks_to_download[i].get('file_size', 0)
                             cumulative_bytes += bytes_downloaded
 
-                            self._send_progress_update(track_id, filename, progress, cumulative_bytes, total_album_bytes)
+                            self._send_progress_update(track_id, filename, progress, cumulative_bytes, total_album_bytes, artist, track_name, album_name, real_path)
                         else:
-                            self._send_progress_update(track_id, filename, progress, bytes_downloaded, total_bytes)
+                            self._send_progress_update(track_id, filename, progress, bytes_downloaded, total_bytes, artist, track_name, album_name, real_path)
 
                         # Log progress updates (reduced verbosity for albums)
                         if search_info and search_info.get('type') == 'album':
@@ -2140,7 +2153,9 @@ class Plugin(BasePlugin):
             if 'album_track_id' in search_info:
                 album_track_id = search_info['album_track_id']
                 album_name = search_info.get('album_name', 'Album')
-                self._send_progress_update(album_track_id, album_name, 100, 0, 0)
+                artist = search_info.get('artist', '')
+                album_folder = search_info.get('album_folder_path', '')
+                self._send_progress_update(album_track_id, album_name, 100, 0, 0, artist, '', album_name, album_folder)
                 self.log(f"[PROGRESS] Album progress complete at 100%")
 
             # Check if album folder was created
@@ -2259,11 +2274,12 @@ class Plugin(BasePlugin):
             # Format COMPLETE message
             artist = search_info.get('artist', '')
             track = search_info.get('track', '')
+            album = search_info.get('album', '')
             track_display = f"{artist} - {track}"
             head_num = search_info.get('head_number', 1)
 
             # Send 100% progress to show completion in progress bar
-            self._send_progress_update(track_id_safe, filename, 100, 0, 0)
+            self._send_progress_update(track_id_safe, filename, 100, 0, 0, artist, track, album, real_path)
             self.log(f"░░░░░▒▒▒▒▒▓▓▓▓▓ HEAD{head_num} COMPLETE ____ {track_display}")
 
             # Remove from active tracking NOW so monitoring thread stops tracking it

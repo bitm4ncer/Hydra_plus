@@ -39,7 +39,7 @@ let eventIdCounter = 0;
 const events = [];
 
 // Active download progress tracking
-// Key: trackId, Value: {filename, progress, bytesDownloaded, totalBytes, lastUpdate}
+// Key: trackId, Value: {filename, artist, track, album, progress, bytesDownloaded, totalBytes, filePath, lastUpdate}
 const activeDownloads = new Map();
 const PROGRESS_MAX_AGE = 10 * 60 * 1000; // 10 minutes TTL
 
@@ -113,7 +113,7 @@ function addEvent(type, message, trackId = null) {
 /**
  * Update or add download progress
  */
-function updateDownloadProgress(trackId, filename, progress, bytesDownloaded, totalBytes) {
+function updateDownloadProgress(trackId, filename, progress, bytesDownloaded, totalBytes, artist = '', track = '', album = '', filePath = '') {
   const now = Date.now();
   const existingEntry = activeDownloads.get(trackId);
 
@@ -123,9 +123,13 @@ function updateDownloadProgress(trackId, filename, progress, bytesDownloaded, to
 
   activeDownloads.set(trackId, {
     filename,
+    artist,
+    track,
+    album,
     progress,
     bytesDownloaded,
     totalBytes,
+    filePath,
     lastUpdate: now,
     completedAt: progress >= 100 ? (existingEntry?.completedAt || now) : null
   });
@@ -333,7 +337,7 @@ const server = http.createServer(async (req, res) => {
     req.on('end', () => {
       try {
         const data = JSON.parse(body);
-        const { trackId, filename, progress, bytesDownloaded, totalBytes } = data;
+        const { trackId, filename, progress, bytesDownloaded, totalBytes, artist, track, album, filePath } = data;
 
         // CRITICAL: Return immediately (fire-and-forget)
         res.writeHead(200, { 'Content-Type': 'application/json' });
@@ -344,7 +348,7 @@ const server = http.createServer(async (req, res) => {
           if (progress === 0 || progress >= 100 || Math.floor(progress) % 10 === 0) {
             console.log(`[Hydra+ STATE] ${filename.substring(0, 40)}: ${Math.round(progress)}%`);
           }
-          updateDownloadProgress(trackId, filename, progress, bytesDownloaded, totalBytes);
+          updateDownloadProgress(trackId, filename, progress, bytesDownloaded, totalBytes, artist, track, album, filePath);
         });
       } catch (error) {
         console.error('[Hydra+ STATE] ✗ Progress error:', error);
@@ -399,6 +403,99 @@ const server = http.createServer(async (req, res) => {
 
     res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({ success: true, cleared: count }));
+    return;
+  }
+
+  // ============================================================================
+  // POST /open-folder - Open file's folder in system file manager
+  // ============================================================================
+  if (req.method === 'POST' && req.url === '/open-folder') {
+    let body = '';
+
+    req.on('data', chunk => {
+      body += chunk.toString();
+    });
+
+    req.on('end', () => {
+      try {
+        const data = JSON.parse(body);
+        const { filePath } = data;
+
+        if (!filePath) {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ success: false, error: 'No filePath provided' }));
+          return;
+        }
+
+        const { exec } = require('child_process');
+        const path = require('path');
+        const fs = require('fs');
+
+        // Normalize and resolve to absolute path
+        let normalizedPath = path.resolve(path.normalize(filePath));
+
+        console.log(`[Hydra+ STATE] Opening folder for file:`);
+        console.log(`[Hydra+ STATE]   Original path: ${filePath.substring(0, 80)}`);
+        console.log(`[Hydra+ STATE]   Normalized path: ${normalizedPath.substring(0, 80)}`);
+
+        // Get parent folder (works whether file exists or not)
+        const folderPath = path.dirname(normalizedPath);
+        console.log(`[Hydra+ STATE]   Parent folder: ${folderPath.substring(0, 80)}`);
+
+        // Check if file exists (just for logging)
+        const fileExists = fs.existsSync(normalizedPath);
+        if (fileExists) {
+          console.log(`[Hydra+ STATE] ✓ File exists`);
+        } else {
+          console.log(`[Hydra+ STATE] ⚠ File not found (may have been renamed) - opening parent folder`);
+        }
+
+        // Determine platform-specific command
+        let command;
+        const platform = process.platform;
+
+        if (platform === 'win32') {
+          // Windows: Just open the folder (not /select since file may have been renamed)
+          const folderPathWin = folderPath.replace(/\//g, '\\');
+          command = `explorer "${folderPathWin}"`;
+        } else if (platform === 'darwin') {
+          // macOS: Open Finder to the folder
+          command = `open "${folderPath}"`;
+        } else {
+          // Linux: Open file manager to the folder
+          command = `xdg-open "${folderPath}"`;
+        }
+
+        console.log(`[Hydra+ STATE] Platform: ${platform}`);
+        console.log(`[Hydra+ STATE] Command: ${command}`);
+
+        // Execute command
+        exec(command, (error, stdout, stderr) => {
+          if (error) {
+            console.error(`[Hydra+ STATE] ✗ Error opening folder: ${error.message}`);
+            console.error(`[Hydra+ STATE] ✗ Error code: ${error.code}`);
+            if (stderr) {
+              console.error(`[Hydra+ STATE] ✗ stderr: ${stderr}`);
+            }
+          } else {
+            console.log(`[Hydra+ STATE] ✓ Folder opened successfully`);
+            if (stdout) {
+              console.log(`[Hydra+ STATE] stdout: ${stdout}`);
+            }
+          }
+        });
+
+        // Respond immediately (don't wait for exec to complete)
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: true }));
+
+      } catch (error) {
+        console.error('[Hydra+ STATE] ✗ Open folder error:', error);
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: false, error: 'Invalid JSON' }));
+      }
+    });
+
     return;
   }
 
