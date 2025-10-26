@@ -861,8 +861,43 @@ class Plugin(BasePlugin):
                         album_name = search_info.get('album', '') if search_info else ''
                         image_url = search_info.get('image_url', '') if search_info else ''
 
+                        # RACE MODE: Calculate maximum progress among all racing heads
+                        # Only send the highest progress to UI (fastest download wins display)
+                        if search_info and search_info.get('race_mode'):
+                            # Find maximum progress among all racing heads
+                            max_progress = progress
+                            max_bytes_downloaded = bytes_downloaded
+                            max_total_bytes = total_bytes
+                            fastest_filename = filename
+
+                            race_heads = search_info.get('race_heads', [])
+                            for race_head in race_heads:
+                                race_transfer_key = race_head['transfer_key']
+                                if race_transfer_key in transfers:
+                                    race_transfer = transfers[race_transfer_key]
+                                    if hasattr(race_transfer, 'size') and hasattr(race_transfer, 'current_byte_offset'):
+                                        race_total = race_transfer.size
+                                        race_downloaded = race_transfer.current_byte_offset or 0
+
+                                        if race_total and race_total > 0:
+                                            race_progress = min(100, (race_downloaded / race_total) * 100)
+
+                                            # Use highest progress
+                                            if race_progress > max_progress:
+                                                max_progress = race_progress
+                                                max_bytes_downloaded = race_downloaded
+                                                max_total_bytes = race_total
+                                                fastest_filename = os.path.basename(race_head['virtual_path'])
+
+                            # Send only the maximum progress
+                            self._send_progress_update(track_id, fastest_filename, max_progress, max_bytes_downloaded, max_total_bytes, artist, track_name, album_name, '', image_url)
+
+                            # Log race progress (show all heads for debugging)
+                            if int(max_progress) % 10 == 0 or max_progress == 100:
+                                self.debug_log(f"[RACE] Max progress: {int(max_progress)}% (showing fastest of {len(race_heads)} racing downloads)")
+
                         # For albums, send cumulative bytes instead of current track bytes
-                        if search_info and search_info.get('type') == 'album' and 'album_track_id' in search_info:
+                        elif search_info and search_info.get('type') == 'album' and 'album_track_id' in search_info:
                             completed_tracks = search_info.get('completed_track_count', 0)
                             total_album_bytes = search_info.get('total_album_bytes', 0)
                             tracks_to_download = search_info.get('tracks_to_download', [])
@@ -876,6 +911,7 @@ class Plugin(BasePlugin):
 
                             self._send_progress_update(track_id, filename, progress, cumulative_bytes, total_album_bytes, artist, track_name, album_name, '', image_url)
                         else:
+                            # Regular single track progress
                             self._send_progress_update(track_id, filename, progress, bytes_downloaded, total_bytes, artist, track_name, album_name, '', image_url)
 
                         # Log progress updates (reduced verbosity for albums)
@@ -1435,6 +1471,21 @@ class Plugin(BasePlugin):
             self.active_downloads[transfer_key] = token
             self.debug_log(f"[PROGRESS] Tracking download: {transfer_key[:80]} (token={token})")
 
+            # RACE MODE: Track all racing heads so we can abort losers when one wins
+            if search_info.get('race_mode'):
+                if 'race_heads' not in search_info:
+                    search_info['race_heads'] = []
+
+                search_info['race_heads'].append({
+                    'index': attempt_index,
+                    'transfer_key': transfer_key,
+                    'virtual_path': candidate['file'],
+                    'username': candidate['user'],
+                    'started_at': time.time(),
+                    'score': candidate['score']
+                })
+                self.debug_log(f"[RACE] Registered HEAD{attempt_index + 1} in race (score: {candidate['score']})")
+
             # Don't log success - the download starting message is enough
 
         except Exception as e:
@@ -1534,6 +1585,12 @@ class Plugin(BasePlugin):
             search_info: Search metadata dict
             reason: Reason for fallback (for logging)
         """
+        # RACE MODE: Don't retry - multiple downloads are already racing
+        # If we're in race mode, other heads are already running in parallel
+        if search_info.get('race_mode'):
+            self.log(f"[RACE] Retry skipped - {len(search_info.get('race_heads', []))} downloads already racing")
+            return
+
         next_attempt = search_info['current_attempt'] + 1
 
         self.log(f"[DL] 🔄 Attempting fallback (reason: {reason})")
@@ -1584,7 +1641,11 @@ class Plugin(BasePlugin):
         """Check if a track search is ready to download."""
         elapsed = current_time - search_info['timestamp']
 
-        # Skip if already attempted download
+        # Skip if already started racing downloads
+        if search_info.get('race_mode'):
+            return
+
+        # Skip if already attempted download (legacy single-download mode)
         if search_info['current_attempt'] >= 0:
             return
 
@@ -1594,14 +1655,51 @@ class Plugin(BasePlugin):
 
         candidates = search_info['download_candidates']
 
-        # If we have candidates, try the best one
+        # RACE MODE: Start top 3 candidates simultaneously for maximum success rate
+        # Instead of waiting for failures, race them in parallel - first to finish wins!
         if candidates and candidates[0]['score'] > 100 and elapsed >= 15:
-            self._try_download_candidate(token, search_info, 0, "Initial download")
+            # Start parallel racing downloads
+            num_to_start = min(3, len(candidates))
+
+            # Count how many are worth racing (score > 50)
+            viable_candidates = [c for c in candidates[:3] if c['score'] > 50]
+
+            if len(viable_candidates) >= 1:
+                self.log(f"[RACE] Starting {len(viable_candidates)} parallel downloads (racing mode)")
+
+                # Initialize race tracking
+                search_info['race_mode'] = True
+                search_info['race_heads'] = []
+                search_info['race_heads_started'] = len(viable_candidates)
+
+                # Start all viable candidates simultaneously
+                for i, candidate in enumerate(candidates[:3]):
+                    if candidate['score'] > 50:
+                        self._try_download_candidate(token, search_info, i, f"RACE HEAD{i+1}")
+
+                self.log(f"[RACE] ✓ Racing {len(viable_candidates)} downloads simultaneously")
+            else:
+                # Not enough viable candidates, fall back to single download
+                self._try_download_candidate(token, search_info, 0, "Single download (insufficient racing candidates)")
 
         elif elapsed > 30:
             # Timeout - download best we have if score is reasonable
             if candidates and candidates[0]['score'] > 50:
-                self._try_download_candidate(token, search_info, 0, "Timeout - downloading best available")
+                # Even at timeout, try racing if we have multiple candidates
+                viable_candidates = [c for c in candidates[:3] if c['score'] > 50]
+
+                if len(viable_candidates) > 1:
+                    self.log(f"[RACE] Timeout - starting {len(viable_candidates)} parallel downloads")
+                    search_info['race_mode'] = True
+                    search_info['race_heads'] = []
+                    search_info['race_heads_started'] = len(viable_candidates)
+
+                    for i, candidate in enumerate(candidates[:3]):
+                        if candidate['score'] > 50:
+                            self._try_download_candidate(token, search_info, i, f"RACE HEAD{i+1} (timeout)")
+                else:
+                    # Only one viable candidate
+                    self._try_download_candidate(token, search_info, 0, "Timeout - downloading best available")
             else:
                 best_score = candidates[0]['score'] if candidates else 0
                 self.log(f"[DL] NO MATCH → '{search_info['query']}' (best score: {best_score}/50)")
@@ -2300,13 +2398,42 @@ class Plugin(BasePlugin):
                 del self.active_downloads[transfer_key]
                 self.debug_log(f"[PROGRESS] Removed from tracking: {filename[:40]}")
 
-            # CLEANUP: Abort any other parallel download attempts for this track
-            # When one candidate succeeds (e.g., HEAD2), abort any other attempts (HEAD1, HEAD3, etc.)
-            # This prevents duplicate downloads and keeps the UI clean
-            candidates = search_info.get('download_candidates', [])
-            current_attempt = search_info.get('current_attempt', 0)
+            # RACE MODE CLEANUP: Abort all other racing downloads when one wins
+            if search_info.get('race_mode'):
+                race_heads = search_info.get('race_heads', [])
+                winning_head = search_info.get('current_attempt', -1)
 
-            if len(candidates) > 1:  # Only if there were multiple candidates
+                self.log(f"[RACE] HEAD{winning_head + 1} WON (score: {search_info.get('head_score', 0)}) - Aborting {len(race_heads) - 1} other racing downloads...")
+                aborted_count = 0
+
+                for race_head in race_heads:
+                    # Skip the winner
+                    if race_head['index'] == winning_head:
+                        continue
+
+                    # Abort this racing head immediately
+                    other_key = race_head['transfer_key']
+                    if other_key in self.active_downloads:
+                        self.log(f"[RACE] Aborting HEAD{race_head['index'] + 1} (score: {race_head['score']})")
+                        if self._abort_transfer_by_path(
+                            race_head['virtual_path'],
+                            race_head['username'],
+                            remove_from_tracking=True
+                        ):
+                            aborted_count += 1
+
+                if aborted_count > 0:
+                    self.log(f"[RACE] ✓ Aborted {aborted_count} losing download(s), winner proceeds to metadata processing")
+
+                # Clear race mode
+                search_info['race_mode'] = False
+                search_info['race_heads'] = []
+
+            # FALLBACK CLEANUP: For non-race mode, abort other candidates (legacy retry logic)
+            elif len(search_info.get('download_candidates', [])) > 1:
+                candidates = search_info.get('download_candidates', [])
+                current_attempt = search_info.get('current_attempt', 0)
+
                 self.debug_log(f"[CLEANUP] Download succeeded (HEAD{current_attempt + 1}), aborting other attempts...")
                 aborted_count = 0
 
