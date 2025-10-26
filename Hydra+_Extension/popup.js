@@ -211,9 +211,17 @@ function loadConsoleEvents() {
         `;
         consoleContent.appendChild(entry);
 
-        // NOTE: Don't create progress bars here - they're created in addConsoleEvent()
-        // This function is called when loading from storage (can be called multiple times)
-        // Creating bars here would cause duplicates on every storage change
+        // IMPORTANT: Process stored events to create progress bars when popup opens
+        // Check for Queued, Searching, and Downloading events
+        if (event.trackId) {
+          if (event.type === 'info' && event.message.startsWith('Queued:')) {
+            createQueuedProgressBar(event.trackId, event.message);
+          } else if (event.type === 'info' && event.message.startsWith('Searching:')) {
+            createSearchingProgressBar(event.trackId, event.message);
+          } else if (event.type === 'info' && event.message.startsWith('Downloading:')) {
+            createInitialProgressBar(event.trackId, event.message);
+          }
+        }
       });
 
       console.log('[Hydra+ Popup] Rendered', consoleEvents.length, 'events to DOM');
