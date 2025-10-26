@@ -1,4 +1,4 @@
 Name='Hydra+'
-Version='0.1.9'
+Version='0.3.2'
 Authors=['Hydra+']
 Description="""Multi-headed Spotify → Soulseek bridge. Connects to bridge server (http://127.0.0.1:3847) to receive track searches from the browser extension and automatically triggers searches with smart auto-download."""

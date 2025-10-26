@@ -861,9 +861,50 @@ class Plugin(BasePlugin):
                         album_name = search_info.get('album', '') if search_info else ''
                         image_url = search_info.get('image_url', '') if search_info else ''
 
+                        # CASCADE MODE: Track HEAD1 start and calculate maximum progress
+                        # Mark when HEAD1 starts downloading (progress > 0)
+                        if search_info and search_info.get('cascade_mode'):
+                            # Check if HEAD1 just started (progress > 0 for first time)
+                            if progress > 0 and not search_info.get('cascade_head1_started'):
+                                search_info['cascade_head1_started'] = True
+                                self.log("[CASCADE] HEAD1 download started (showing progress)")
+
+                            # Find maximum progress among all cascade heads
+                            max_progress = progress
+                            max_bytes_downloaded = bytes_downloaded
+                            max_total_bytes = total_bytes
+                            fastest_filename = filename
+
+                            cascade_heads = search_info.get('cascade_heads', [])
+                            for cascade_head in cascade_heads:
+                                cascade_transfer_key = cascade_head['transfer_key']
+                                if cascade_transfer_key in transfers:
+                                    cascade_transfer = transfers[cascade_transfer_key]
+                                    if hasattr(cascade_transfer, 'size') and hasattr(cascade_transfer, 'current_byte_offset'):
+                                        cascade_total = cascade_transfer.size
+                                        cascade_downloaded = cascade_transfer.current_byte_offset or 0
+
+                                        if cascade_total and cascade_total > 0:
+                                            cascade_progress = min(100, (cascade_downloaded / cascade_total) * 100)
+
+                                            # Use highest progress
+                                            if cascade_progress > max_progress:
+                                                max_progress = cascade_progress
+                                                max_bytes_downloaded = cascade_downloaded
+                                                max_total_bytes = cascade_total
+                                                fastest_filename = os.path.basename(cascade_head['virtual_path'])
+
+                            # Send only the maximum progress
+                            self._send_progress_update(track_id, fastest_filename, max_progress, max_bytes_downloaded, max_total_bytes, artist, track_name, album_name, '', image_url)
+
+                            # Log cascade progress (show all heads for debugging)
+                            if int(max_progress) % 10 == 0 or max_progress == 100:
+                                heads_count = len(cascade_heads)
+                                self.debug_log(f"[CASCADE] Max progress: {int(max_progress)}% ({heads_count} head(s) active)")
+
                         # RACE MODE: Calculate maximum progress among all racing heads
                         # Only send the highest progress to UI (fastest download wins display)
-                        if search_info and search_info.get('race_mode'):
+                        elif search_info and search_info.get('race_mode'):
                             # Find maximum progress among all racing heads
                             max_progress = progress
                             max_bytes_downloaded = bytes_downloaded
@@ -1471,8 +1512,23 @@ class Plugin(BasePlugin):
             self.active_downloads[transfer_key] = token
             self.debug_log(f"[PROGRESS] Tracking download: {transfer_key[:80]} (token={token})")
 
-            # RACE MODE: Track all racing heads so we can abort losers when one wins
-            if search_info.get('race_mode'):
+            # CASCADE MODE: Track all cascade heads so we can abort losers when one wins
+            if search_info.get('cascade_mode'):
+                if 'cascade_heads' not in search_info:
+                    search_info['cascade_heads'] = []
+
+                search_info['cascade_heads'].append({
+                    'index': attempt_index,
+                    'transfer_key': transfer_key,
+                    'virtual_path': candidate['file'],
+                    'username': candidate['user'],
+                    'started_at': time.time(),
+                    'score': candidate['score']
+                })
+                self.debug_log(f"[CASCADE] Registered HEAD{attempt_index + 1} in cascade (score: {candidate['score']})")
+
+            # LEGACY RACE MODE: Track all racing heads (kept for backward compatibility)
+            elif search_info.get('race_mode'):
                 if 'race_heads' not in search_info:
                     search_info['race_heads'] = []
 
@@ -1591,6 +1647,12 @@ class Plugin(BasePlugin):
             self.log(f"[RACE] Retry skipped - {len(search_info.get('race_heads', []))} downloads already racing")
             return
 
+        # CASCADE MODE: Don't retry - cascading system handles backups automatically
+        # Cascade heads will launch on schedule (10s/60s/120s) if needed
+        if search_info.get('cascade_mode'):
+            self.log(f"[CASCADE] Retry skipped - cascading system will handle backups automatically")
+            return
+
         next_attempt = search_info['current_attempt'] + 1
 
         self.log(f"[DL] 🔄 Attempting fallback (reason: {reason})")
@@ -1609,6 +1671,50 @@ class Plugin(BasePlugin):
 
         # Try next candidate (logging happens in _try_download_candidate)
         self._try_download_candidate(token, search_info, next_attempt, f"Trying next candidate")
+
+    def _check_cascade_launches(self):
+        """Check if we should launch additional cascade heads (HEAD2, HEAD3)."""
+        if not self.active_searches:
+            return
+
+        current_time = time.time()
+
+        for token, search_info in list(self.active_searches.items()):
+            if not search_info.get('cascade_mode'):
+                continue
+
+            try:
+                elapsed = current_time - search_info['cascade_start_time']
+                heads_launched = search_info.get('cascade_heads_launched', 1)
+                candidates = search_info.get('download_candidates', [])
+
+                # HEAD2 launch logic (10s delay if HEAD1 hasn't started, or 60s timeout)
+                if heads_launched == 1 and len(candidates) >= 2 and candidates[1]['score'] > 50:
+                    head1_started = search_info.get('cascade_head1_started', False)
+
+                    # Launch HEAD2 if HEAD1 hasn't started after 10s
+                    if not head1_started and elapsed >= 10:
+                        self.log(f"[CASCADE] HEAD1 no response after 10s → launching HEAD2 (score: {candidates[1]['score']})")
+                        self._try_download_candidate(token, search_info, 1, "CASCADE HEAD2 (HEAD1 stalled)")
+                        search_info['cascade_heads_launched'] = 2
+
+                    # Launch HEAD2 if HEAD1 taking too long (60s timeout)
+                    elif head1_started and elapsed >= 60:
+                        self.log(f"[CASCADE] HEAD1 taking too long (60s) → launching HEAD2 as backup (score: {candidates[1]['score']})")
+                        self._try_download_candidate(token, search_info, 1, "CASCADE HEAD2 (timeout)")
+                        search_info['cascade_heads_launched'] = 2
+
+                # HEAD3 launch logic (120s total timeout)
+                elif heads_launched == 2 and len(candidates) >= 3 and candidates[2]['score'] > 50:
+                    if elapsed >= 120:
+                        self.log(f"[CASCADE] HEAD1/HEAD2 taking too long (120s) → launching HEAD3 as final backup (score: {candidates[2]['score']})")
+                        self._try_download_candidate(token, search_info, 2, "CASCADE HEAD3 (final backup)")
+                        search_info['cascade_heads_launched'] = 3
+
+            except Exception as e:
+                self.debug_log(f"[CASCADE] Error checking cascade for {token}: {e}")
+                import traceback
+                self.debug_log(f"[CASCADE] Traceback: {traceback.format_exc()}")
 
     def _check_and_download_ready_searches(self):
         """Check active searches and download if enough time has passed to collect results."""
@@ -1641,11 +1747,11 @@ class Plugin(BasePlugin):
         """Check if a track search is ready to download."""
         elapsed = current_time - search_info['timestamp']
 
-        # Skip if already started racing downloads
-        if search_info.get('race_mode'):
+        # Skip if already started cascade downloads
+        if search_info.get('cascade_mode'):
             return
 
-        # Skip if already attempted download (legacy single-download mode)
+        # Skip if already attempted download
         if search_info['current_attempt'] >= 0:
             return
 
@@ -1655,48 +1761,45 @@ class Plugin(BasePlugin):
 
         candidates = search_info['download_candidates']
 
-        # RACE MODE: Start top 3 candidates simultaneously for maximum success rate
-        # Instead of waiting for failures, race them in parallel - first to finish wins!
+        # CASCADE MODE: Start HEAD1 (best quality) first, add backups only if needed
+        # Quality over speed: give best candidate a chance before adding parallel downloads
         if candidates and candidates[0]['score'] > 100 and elapsed >= 15:
-            # Start parallel racing downloads
-            num_to_start = min(3, len(candidates))
-
-            # Count how many are worth racing (score > 50)
+            # Count viable candidates for potential cascading
             viable_candidates = [c for c in candidates[:3] if c['score'] > 50]
 
             if len(viable_candidates) >= 1:
-                self.log(f"[RACE] Starting {len(viable_candidates)} parallel downloads (racing mode)")
+                best_score = candidates[0]['score']
+                self.log(f"[CASCADE] Starting HEAD1 (score: {best_score}) - will cascade HEAD2/HEAD3 if needed")
 
-                # Initialize race tracking
-                search_info['race_mode'] = True
-                search_info['race_heads'] = []
-                search_info['race_heads_started'] = len(viable_candidates)
+                # Initialize cascade tracking
+                search_info['cascade_mode'] = True
+                search_info['cascade_start_time'] = current_time
+                search_info['cascade_head1_started'] = False  # Will be set when progress > 0
+                search_info['cascade_heads_launched'] = 1
+                search_info['cascade_heads'] = []
 
-                # Start all viable candidates simultaneously
-                for i, candidate in enumerate(candidates[:3]):
-                    if candidate['score'] > 50:
-                        self._try_download_candidate(token, search_info, i, f"RACE HEAD{i+1}")
+                # Start HEAD1 only (best quality candidate)
+                self._try_download_candidate(token, search_info, 0, "CASCADE HEAD1 (best quality)")
 
-                self.log(f"[RACE] ✓ Racing {len(viable_candidates)} downloads simultaneously")
+                self.log(f"[CASCADE] ✓ HEAD1 launched, {len(viable_candidates) - 1} backup(s) available")
             else:
                 # Not enough viable candidates, fall back to single download
-                self._try_download_candidate(token, search_info, 0, "Single download (insufficient racing candidates)")
+                self._try_download_candidate(token, search_info, 0, "Single download")
 
         elif elapsed > 30:
             # Timeout - download best we have if score is reasonable
             if candidates and candidates[0]['score'] > 50:
-                # Even at timeout, try racing if we have multiple candidates
+                # Start with cascade even at timeout
                 viable_candidates = [c for c in candidates[:3] if c['score'] > 50]
 
-                if len(viable_candidates) > 1:
-                    self.log(f"[RACE] Timeout - starting {len(viable_candidates)} parallel downloads")
-                    search_info['race_mode'] = True
-                    search_info['race_heads'] = []
-                    search_info['race_heads_started'] = len(viable_candidates)
-
-                    for i, candidate in enumerate(candidates[:3]):
-                        if candidate['score'] > 50:
-                            self._try_download_candidate(token, search_info, i, f"RACE HEAD{i+1} (timeout)")
+                if len(viable_candidates) >= 1:
+                    self.log(f"[CASCADE] Timeout - starting HEAD1 with cascade backup")
+                    search_info['cascade_mode'] = True
+                    search_info['cascade_start_time'] = current_time
+                    search_info['cascade_head1_started'] = False
+                    search_info['cascade_heads_launched'] = 1
+                    search_info['cascade_heads'] = []
+                    self._try_download_candidate(token, search_info, 0, "CASCADE HEAD1 (timeout)")
                 else:
                     # Only one viable candidate
                     self._try_download_candidate(token, search_info, 0, "Timeout - downloading best available")
@@ -2403,6 +2506,47 @@ class Plugin(BasePlugin):
                 # Mark this head as the winner immediately (claim victory)
                 search_info['race_winner'] = search_info.get('head_number', 1)
 
+            # CASCADE MODE: Check if another head already won
+            # Prevents race condition where multiple cascade heads finish simultaneously
+            if search_info.get('cascade_mode'):
+                # If cascade_winner is set, another head already claimed victory
+                if search_info.get('cascade_winner'):
+                    # Find which head number this is
+                    head_num = 0
+                    for cascade_head in search_info.get('cascade_heads', []):
+                        if cascade_head['transfer_key'] == transfer_key:
+                            head_num = cascade_head['index'] + 1
+                            break
+
+                    self.log(f"[CASCADE] HEAD{head_num} finished but race already won by HEAD{search_info.get('cascade_winner', '?')} - discarding this download")
+
+                    # Remove from tracking
+                    if transfer_key in self.active_downloads:
+                        del self.active_downloads[transfer_key]
+
+                    # Delete the downloaded file (loser)
+                    try:
+                        import os
+                        if os.path.exists(real_path):
+                            os.remove(real_path)
+                            self.log(f"[CASCADE] Deleted losing download: {os.path.basename(real_path)}")
+                    except Exception as e:
+                        self.debug_log(f"[CASCADE] Failed to delete losing file: {e}")
+
+                    return  # Don't process this download further
+
+                # Find which head won (determine index)
+                winning_head_index = -1
+                winning_score = 0
+                for cascade_head in search_info.get('cascade_heads', []):
+                    if cascade_head['transfer_key'] == transfer_key:
+                        winning_head_index = cascade_head['index']
+                        winning_score = cascade_head['score']
+                        break
+
+                # Mark this head as the winner immediately (claim victory)
+                search_info['cascade_winner'] = winning_head_index + 1
+
             # Send final 100% progress update before completion event
             track_id_safe = search_info.get('track_id', '') or f"{search_info.get('artist', '')}-{search_info.get('track', '')}".replace(' ', '')[:20]
             import os
@@ -2414,7 +2558,17 @@ class Plugin(BasePlugin):
             album = search_info.get('album', '')
             image_url = search_info.get('image_url', '')
             track_display = f"{artist} - {track}"
-            head_num = search_info.get('head_number', 1)
+
+            # Determine which head completed (for logging)
+            head_num = 1
+            if search_info.get('race_mode'):
+                head_num = search_info.get('head_number', 1)
+            elif search_info.get('cascade_mode'):
+                # Find which cascade head this is
+                for cascade_head in search_info.get('cascade_heads', []):
+                    if cascade_head['transfer_key'] == transfer_key:
+                        head_num = cascade_head['index'] + 1
+                        break
 
             # Send 100% progress to show completion in progress bar
             self._send_progress_update(track_id_safe, filename, 100, 0, 0, artist, track, album, real_path, image_url)
@@ -2457,7 +2611,47 @@ class Plugin(BasePlugin):
                 search_info['race_heads'] = []
                 search_info['race_winner'] = None
 
-            # FALLBACK CLEANUP: For non-race mode, abort other candidates (legacy retry logic)
+            # CASCADE MODE CLEANUP: Abort all other cascade downloads when one wins
+            elif search_info.get('cascade_mode'):
+                cascade_heads = search_info.get('cascade_heads', [])
+                winning_head_index = -1
+                winning_score = 0
+
+                # Find the winning head
+                for cascade_head in cascade_heads:
+                    if cascade_head['transfer_key'] == transfer_key:
+                        winning_head_index = cascade_head['index']
+                        winning_score = cascade_head['score']
+                        break
+
+                self.log(f"[CASCADE] HEAD{winning_head_index + 1} WON (score: {winning_score}) - Aborting {len(cascade_heads) - 1} other cascade downloads...")
+                aborted_count = 0
+
+                for cascade_head in cascade_heads:
+                    # Skip the winner
+                    if cascade_head['index'] == winning_head_index:
+                        continue
+
+                    # Abort this cascade head immediately
+                    other_key = cascade_head['transfer_key']
+                    if other_key in self.active_downloads:
+                        self.log(f"[CASCADE] Aborting HEAD{cascade_head['index'] + 1} (score: {cascade_head['score']})")
+                        if self._abort_transfer_by_path(
+                            cascade_head['virtual_path'],
+                            cascade_head['username'],
+                            remove_from_tracking=True
+                        ):
+                            aborted_count += 1
+
+                if aborted_count > 0:
+                    self.log(f"[CASCADE] ✓ Aborted {aborted_count} losing download(s), winner proceeds to metadata processing")
+
+                # Clear cascade mode and winner flag
+                search_info['cascade_mode'] = False
+                search_info['cascade_heads'] = []
+                search_info['cascade_winner'] = None
+
+            # FALLBACK CLEANUP: For non-race/cascade mode, abort other candidates (legacy retry logic)
             elif len(search_info.get('download_candidates', [])) > 1:
                 candidates = search_info.get('download_candidates', [])
                 current_attempt = search_info.get('current_attempt', 0)
@@ -3618,6 +3812,12 @@ class Plugin(BasePlugin):
                     self.last_activity_time = time.time()
             except Exception as e:
                 self.log(f" Error in auto-download check: {e}")
+
+            # Check if we should launch cascade backups (HEAD2/HEAD3)
+            try:
+                self._check_cascade_launches()
+            except Exception as e:
+                self.log(f" Error in cascade check: {e}")
 
             # Monitor active downloads for failures/timeouts
             try:

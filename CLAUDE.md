@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-**Hydra+** is a Spotify → Soulseek bridge that enables one-click music downloads from Spotify to Nicotine+ with automatic metadata management. Version 0.1.9.
+**Hydra+** is a Spotify → Soulseek bridge that enables one-click music downloads from Spotify to Nicotine+ with automatic metadata management. Version 0.3.2.
 
 **Architecture Flow:**
 ```
@@ -164,13 +164,14 @@ The plugin extends `BasePlugin` from Nicotine+ and implements these critical hoo
 **`_on_file_search_response(self, msg)`** - Called when search results arrive from a peer
 - Receives search results from Soulseek network
 - Scores files using `_calculate_file_score()` (bitrate, duration, size, filename match)
-- Tracks top 5 candidates per search for auto-fallback
-- Triggers auto-download if score > 100 after 15s or score > 50 after 30s
+- Tracks top 3 candidates per search for cascading downloads
+- Triggers CASCADE MODE if score > 100 after 15s: starts HEAD1, adds HEAD2/HEAD3 on schedule
 
 **`download_finished_notification(self, user, virtual_path, real_path)`** - Called when download completes
 - Routes to `_handle_track_completion()` or `_handle_album_track_completion()`
 - Sends metadata to metadata worker for processing
-- Implements fallback: tries next candidate if download fails
+- Implements atomic winner claiming to prevent race conditions
+- Aborts all other cascade/race heads when one wins
 - Updates progress tracking via state server
 
 ### Auto-Download Scoring System
@@ -189,10 +190,49 @@ The plugin extends `BasePlugin` from Nicotine+ and implements these critical hoo
 - `format_preference='flac'`: FLAC gets +100 bonus, MP3 gets -50 penalty
 - Auto-fallback to alternative formats if preferred unavailable
 
-**Download triggers:**
-- Score > 100 after 15s: Download immediately (high confidence)
-- Score > 50 after 30s: Download best candidate (timeout)
-- Top 5 candidates tracked for auto-fallback on failure
+**Download triggers (Cascading Mode):**
+- Score > 100 after 15s: Start CASCADE MODE
+  - HEAD1 (best quality/score) downloads immediately
+  - HEAD2 launches if HEAD1 hasn't started after 10s
+  - HEAD2 launches if HEAD1 taking too long (60s timeout)
+  - HEAD3 launches as final backup after 120s total
+- Quality over speed: Best candidate gets first chance before adding parallel downloads
+- When one head completes, all others are aborted immediately
+
+### Cascading Download System
+
+**Philosophy:** Prioritize quality over speed. Give the best-scored file first chance before adding parallel downloads.
+
+**Implementation:** `_check_track_download_ready()` and `_check_cascade_launches()` in `__init__.py`
+
+**Cascade Timing Logic:**
+
+1. **Initial Launch (15s threshold)**
+   - When best candidate scores > 100 points
+   - Start HEAD1 only (highest quality)
+   - Set `cascade_mode = True`
+   - Track `cascade_start_time`
+
+2. **HEAD2 Launch Decision (10s or 60s)**
+   - **10-second rule**: If HEAD1 hasn't started downloading (no progress)
+   - **60-second rule**: If HEAD1 started but taking too long
+   - Ensures responsive fallback if best source is slow
+
+3. **HEAD3 Launch Decision (120s)**
+   - Final backup if both HEAD1 and HEAD2 haven't completed
+   - Triggered after 2 minutes total elapsed time
+
+**Winner Detection:**
+- First head to complete sets `cascade_winner` flag atomically
+- All other cascade heads immediately aborted
+- Losing downloads deleted from disk
+- Only winner proceeds to metadata processing
+
+**Key Characteristics:**
+- Bandwidth efficient: Only downloads what's needed
+- Quality focused: Best file gets priority
+- Resilient: Automatic escalation if primary stalls
+- Clean: No duplicate files, atomic cleanup
 
 ### Adaptive Polling
 
