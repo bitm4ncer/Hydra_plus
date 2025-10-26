@@ -2376,6 +2376,33 @@ class Plugin(BasePlugin):
             if not search_info.get('auto_download', False):
                 return
 
+            # RACE MODE: Check if another head already won
+            # This prevents race condition where multiple heads finish simultaneously
+            if search_info.get('race_mode'):
+                # If race_mode is False, another head already won and cleared it
+                # If race_winner is set, another head already claimed victory
+                if not search_info.get('race_mode') or search_info.get('race_winner'):
+                    head_num = search_info.get('head_number', 1)
+                    self.log(f"[RACE] HEAD{head_num} finished but race already won by HEAD{search_info.get('race_winner', '?')} - discarding this download")
+
+                    # Remove from tracking
+                    if transfer_key in self.active_downloads:
+                        del self.active_downloads[transfer_key]
+
+                    # Delete the downloaded file (loser)
+                    try:
+                        import os
+                        if os.path.exists(real_path):
+                            os.remove(real_path)
+                            self.log(f"[RACE] Deleted losing download: {os.path.basename(real_path)}")
+                    except Exception as e:
+                        self.debug_log(f"[RACE] Failed to delete losing file: {e}")
+
+                    return  # Don't process this download further
+
+                # Mark this head as the winner immediately (claim victory)
+                search_info['race_winner'] = search_info.get('head_number', 1)
+
             # Send final 100% progress update before completion event
             track_id_safe = search_info.get('track_id', '') or f"{search_info.get('artist', '')}-{search_info.get('track', '')}".replace(' ', '')[:20]
             import os
@@ -2425,9 +2452,10 @@ class Plugin(BasePlugin):
                 if aborted_count > 0:
                     self.log(f"[RACE] ✓ Aborted {aborted_count} losing download(s), winner proceeds to metadata processing")
 
-                # Clear race mode
+                # Clear race mode and winner flag
                 search_info['race_mode'] = False
                 search_info['race_heads'] = []
+                search_info['race_winner'] = None
 
             # FALLBACK CLEANUP: For non-race mode, abort other candidates (legacy retry logic)
             elif len(search_info.get('download_candidates', [])) > 1:
