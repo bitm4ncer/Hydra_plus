@@ -91,10 +91,73 @@ function safeStorageSyncSet(data, callback) {
   }
 }
 
-// Track color assignments for concurrent tracks (excluding accent green)
-const trackColors = ['#6a9fb5', '#ffa500', '#ff6ec7', '#00bfff', '#ff4500', '#9370db', '#32cd32', '#ff69b4'];
+// Track color assignments for concurrent tracks (8 vibrant colors from user)
+const trackColors = ['#ff00ff', '#ff5500', '#ffff00', '#0066ff', '#ffccdd', '#ff6666', '#996699', '#00ffcc'];
 let trackColorMap = new Map(); // trackId -> color
 let nextColorIndex = 0;
+
+// Helper function to desaturate a hex color by reducing saturation
+function desaturateColor(hex, amount = 0.6) {
+  // Convert hex to RGB
+  const r = parseInt(hex.slice(1, 3), 16);
+  const g = parseInt(hex.slice(3, 5), 16);
+  const b = parseInt(hex.slice(5, 7), 16);
+
+  // Convert RGB to HSL
+  const r1 = r / 255;
+  const g1 = g / 255;
+  const b1 = b / 255;
+
+  const max = Math.max(r1, g1, b1);
+  const min = Math.min(r1, g1, b1);
+  const l = (max + min) / 2;
+
+  let h = 0;
+  let s = 0;
+
+  if (max !== min) {
+    const d = max - min;
+    s = l > 0.5 ? d / (2 - max - min) : d / (max + min);
+
+    switch (max) {
+      case r1: h = ((g1 - b1) / d + (g1 < b1 ? 6 : 0)) / 6; break;
+      case g1: h = ((b1 - r1) / d + 2) / 6; break;
+      case b1: h = ((r1 - g1) / d + 4) / 6; break;
+    }
+  }
+
+  // Reduce saturation
+  s = s * amount;
+
+  // Convert HSL back to RGB
+  const hue2rgb = (p, q, t) => {
+    if (t < 0) t += 1;
+    if (t > 1) t -= 1;
+    if (t < 1/6) return p + (q - p) * 6 * t;
+    if (t < 1/2) return q;
+    if (t < 2/3) return p + (q - p) * (2/3 - t) * 6;
+    return p;
+  };
+
+  let r2, g2, b2;
+  if (s === 0) {
+    r2 = g2 = b2 = l;
+  } else {
+    const q = l < 0.5 ? l * (1 + s) : l + s - l * s;
+    const p = 2 * l - q;
+    r2 = hue2rgb(p, q, h + 1/3);
+    g2 = hue2rgb(p, q, h);
+    b2 = hue2rgb(p, q, h - 1/3);
+  }
+
+  // Convert back to hex
+  const toHex = (x) => {
+    const hex = Math.round(x * 255).toString(16);
+    return hex.length === 1 ? '0' + hex : hex;
+  };
+
+  return `#${toHex(r2)}${toHex(g2)}${toHex(b2)}`;
+}
 
 // Get or assign color for a track
 function getTrackColor(trackId) {
@@ -510,7 +573,8 @@ function createQueuedProgressBar(trackId, message) {
   const fill = document.createElement('div');
   fill.className = 'progress-bar-fill-vertical';
   fill.style.height = '0%'; // Start at 0% (hidden)
-  fill.style.backgroundColor = trackColor || '#B9FF37';
+  const desaturated = desaturateColor(trackColor || '#B9FF37', 0.3);
+  fill.style.background = `linear-gradient(to top, ${desaturated}, ${trackColor || '#B9FF37'})`;
 
   barContainer.appendChild(fill);
   progressBarsArea.appendChild(barContainer);
@@ -645,7 +709,8 @@ async function createSearchingProgressBar(trackId, message) {
   const fill = document.createElement('div');
   fill.className = 'progress-bar-fill-vertical';
   fill.style.height = '5%'; // Start at 5%
-  fill.style.backgroundColor = trackColor || '#B9FF37';
+  const desaturated = desaturateColor(trackColor || '#B9FF37', 0.3);
+  fill.style.background = `linear-gradient(to top, ${desaturated}, ${trackColor || '#B9FF37'})`;
 
   barContainer.appendChild(fill);
   progressBarsArea.appendChild(barContainer);
@@ -746,7 +811,8 @@ function createInitialProgressBar(trackId, message) {
   const fill = document.createElement('div');
   fill.className = 'progress-bar-fill-vertical';
   fill.style.height = '5%'; // Start at 5%
-  fill.style.backgroundColor = trackColor || '#B9FF37';
+  const desaturated = desaturateColor(trackColor || '#B9FF37', 0.3);
+  fill.style.background = `linear-gradient(to top, ${desaturated}, ${trackColor || '#B9FF37'})`;
 
   barContainer.appendChild(fill);
   progressBarsArea.appendChild(barContainer);
@@ -938,7 +1004,8 @@ function updateProgressBars(activeDownloads) {
       // Ensure minimum visibility (5% minimum)
       const displayProgress = Math.max(5, progress);
       fill.style.height = `${displayProgress}%`;
-      fill.style.backgroundColor = trackColor || '#B9FF37';
+      const desaturated = desaturateColor(trackColor || '#B9FF37', 0.3);
+  fill.style.background = `linear-gradient(to top, ${desaturated}, ${trackColor || '#B9FF37'})`;
 
       // Add completed class if already at 100%
       if (isComplete) {
@@ -985,7 +1052,8 @@ function updateProgressBars(activeDownloads) {
         // Ensure minimum visibility (5% minimum)
         const displayProgress = Math.max(5, progress);
         fill.style.height = `${displayProgress}%`;
-        fill.style.backgroundColor = trackColor || '#B9FF37';
+        const desaturated = desaturateColor(trackColor || '#B9FF37', 0.3);
+  fill.style.background = `linear-gradient(to top, ${desaturated}, ${trackColor || '#B9FF37'})`;
 
         // Add completed class when reaching 100%
         if (isComplete) {
