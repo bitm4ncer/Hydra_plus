@@ -376,10 +376,11 @@ function addTrackInfoHover(barContainer) {
     const imageUrl = barContainer.getAttribute('data-image-url') || '';
 
     const trackInfo = generateTooltipText(artist, track, album);
-    const trackColor = getTrackColor(trackId);
+    const accentColor = '#B9FF37';
 
-    currentTrackInfo.textContent = trackInfo;
-    currentTrackInfo.style.color = trackColor || '#B9FF37'; // Use track color or default accent
+    // Show track info with color code in tooltip
+    currentTrackInfo.textContent = trackInfo + ' (' + accentColor + ')';
+    currentTrackInfo.style.color = accentColor;
 
     // Show album artwork thumbnail if available
     if (imageUrl) {
@@ -502,8 +503,8 @@ async function createSearchingProgressBar(trackId, message) {
     }
   }
 
-  // Get track color
-  const trackColor = getTrackColor(trackId);
+  // All bars use accent green color
+  const accentColor = '#B9FF37';
 
   // Create new vertical bar at 5% height with 50% opacity
   const barContainer = document.createElement('div');
@@ -528,7 +529,7 @@ async function createSearchingProgressBar(trackId, message) {
   const fill = document.createElement('div');
   fill.className = 'progress-bar-fill-vertical';
   fill.style.height = '5%'; // Start at 5%
-  fill.style.backgroundColor = trackColor || '#B9FF37';
+  fill.style.backgroundColor = accentColor;
 
   barContainer.appendChild(fill);
   progressBarsArea.appendChild(barContainer);
@@ -607,8 +608,8 @@ function createInitialProgressBar(trackId, message) {
   // BAR DOESN'T EXIST - Create new bar directly in downloading state
   console.log('[Hydra+ PROGRESS] Creating new bar in downloading state');
 
-  // Get track color
-  const trackColor = getTrackColor(trackId);
+  // All bars use accent green color
+  const accentColor = '#B9FF37';
 
   // Create new vertical bar at 5% height with 100% opacity
   barContainer = document.createElement('div');
@@ -628,7 +629,7 @@ function createInitialProgressBar(trackId, message) {
   const fill = document.createElement('div');
   fill.className = 'progress-bar-fill-vertical';
   fill.style.height = '5%'; // Start at 5%
-  fill.style.backgroundColor = trackColor || '#B9FF37';
+  fill.style.backgroundColor = accentColor;
 
   barContainer.appendChild(fill);
   progressBarsArea.appendChild(barContainer);
@@ -763,7 +764,12 @@ function updateProgressBars(activeDownloads) {
   });
 
   // Update all bars based on progressBarStates
-  for (const [trackId, state] of progressBarStates.entries()) {
+  // STABLE ORDER: Sort by creation timestamp (oldest first) to maintain consistent visual order
+  const sortedStates = Array.from(progressBarStates.entries()).sort((a, b) => {
+    return a[1].createdAt - b[1].createdAt; // Oldest on left, newest on right
+  });
+
+  for (const [trackId, state] of sortedStates) {
     const { artist, track, album, progress, filePath, imageUrl } = state;
     const isComplete = progress >= 100;
 
@@ -772,8 +778,8 @@ function updateProgressBars(activeDownloads) {
       console.log('[Hydra+ PROGRESS] Metadata for', trackId.substring(0, 10), ':', { artist, track, album, imageUrl: imageUrl || '(none)' });
     }
 
-    // Get track color
-    const trackColor = getTrackColor(trackId);
+    // All bars use accent green color
+    const accentColor = '#B9FF37';
 
     // Generate tooltip text from metadata
     const tooltipText = generateTooltipText(artist, track, album);
@@ -814,7 +820,7 @@ function updateProgressBars(activeDownloads) {
       // Ensure minimum visibility (5% minimum)
       const displayProgress = Math.max(5, progress);
       fill.style.height = `${displayProgress}%`;
-      fill.style.backgroundColor = trackColor || '#B9FF37';
+      fill.style.backgroundColor = accentColor;
 
       // Add completed class if already at 100%
       if (isComplete) {
@@ -823,7 +829,27 @@ function updateProgressBars(activeDownloads) {
       }
 
       barContainer.appendChild(fill);
-      progressBarsArea.appendChild(barContainer);
+
+      // Insert bar in correct position based on createdAt timestamp
+      // This maintains consistent visual order even when bars are created out of order
+      const existingBars = Array.from(progressBarsArea.querySelectorAll('.vertical-progress-bar'));
+      let insertPosition = null;
+
+      for (const existingBar of existingBars) {
+        const existingTrackId = existingBar.getAttribute('data-track-id');
+        const existingState = progressBarStates.get(existingTrackId);
+
+        if (existingState && existingState.createdAt > state.createdAt) {
+          insertPosition = existingBar;
+          break;
+        }
+      }
+
+      if (insertPosition) {
+        progressBarsArea.insertBefore(barContainer, insertPosition);
+      } else {
+        progressBarsArea.appendChild(barContainer);
+      }
     } else {
       // Update existing bar
       console.log('[Hydra+ PROGRESS] Updating bar for:', tooltipText, 'progress:', progress, 'state:', state.state);
@@ -841,7 +867,7 @@ function updateProgressBars(activeDownloads) {
         // Ensure minimum visibility (5% minimum)
         const displayProgress = Math.max(5, progress);
         fill.style.height = `${displayProgress}%`;
-        fill.style.backgroundColor = trackColor || '#B9FF37';
+        fill.style.backgroundColor = accentColor;
 
         // Add completed class when reaching 100%
         if (isComplete) {
