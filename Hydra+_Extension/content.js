@@ -172,7 +172,55 @@ function getTrackInfo(trackRow) {
       duration = 0;
     }
 
-    return { artistName, trackName, albumName, trackId, duration };
+    // Extract album artwork URL from track row
+    let imageUrl = '';
+    try {
+      // Strategy 1: If we have an album element, look for image near it (most specific)
+      if (albumElement) {
+        // First try to find image within the same parent container as album link
+        let albumContainer = albumElement.closest('div[role="row"]') || albumElement.closest('div');
+        if (albumContainer) {
+          // Look for all images in the container
+          const containerImages = albumContainer.querySelectorAll('img[src*="i.scdn.co/image"]');
+
+          // Find the image that's likely the album cover (usually first one in the container)
+          for (const img of containerImages) {
+            // Skip very small images (likely icons, not album art)
+            if (img.width >= 40 && img.height >= 40) {
+              imageUrl = img.src;
+              console.log('[Track Info] Found artwork near album link:', imageUrl, 'for album:', albumName);
+              break;
+            }
+          }
+        }
+      }
+
+      // Strategy 2: Look for first suitable image in track row
+      if (!imageUrl) {
+        const rowImages = trackRow.querySelectorAll('img[src*="i.scdn.co/image"]');
+        for (const img of rowImages) {
+          // Filter by size to avoid icons
+          if (img.width >= 40 && img.height >= 40) {
+            imageUrl = img.src;
+            console.log('[Track Info] Found artwork from track row:', imageUrl);
+            break;
+          }
+        }
+      }
+
+      // Strategy 3: Fallback to og:image meta tag (only if nothing else found)
+      if (!imageUrl) {
+        const ogImage = document.querySelector('meta[property="og:image"]');
+        if (ogImage) {
+          imageUrl = ogImage.getAttribute('content');
+          console.log('[Track Info] Fallback to og:image:', imageUrl);
+        }
+      }
+    } catch (imageError) {
+      console.log('[Track Info] Could not extract image URL:', imageError);
+    }
+
+    return { artistName, trackName, albumName, trackId, duration, imageUrl };
   } catch (error) {
     console.error('Error extracting track info:', error);
     return null;
@@ -235,6 +283,39 @@ async function sendToNicotine(trackInfo) {
   console.log('[Nicotine+] Format preference:', formatPreference);
   console.log('[Nicotine+] Bridge URL:', BRIDGE_URL);
 
+  // Fetch album artwork from Spotify API (more reliable than DOM scraping)
+  let imageUrl = '';
+  try {
+    console.log('[Nicotine+] Fetching album artwork from Spotify API...');
+    const artworkResponse = await fetch('http://127.0.0.1:3848/get-album-artwork', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        artist: trackInfo.artistName,
+        track: trackInfo.trackName
+      })
+    });
+
+    if (artworkResponse.ok) {
+      const artworkData = await artworkResponse.json();
+      if (artworkData.success && artworkData.imageUrl) {
+        imageUrl = artworkData.imageUrl;
+        console.log('[Nicotine+] ✓ Got album artwork from API:', imageUrl);
+      } else {
+        console.log('[Nicotine+] ⚠ No artwork from API, will try DOM fallback');
+        imageUrl = trackInfo.imageUrl || '';
+      }
+    } else {
+      console.log('[Nicotine+] ⚠ Artwork API request failed, using DOM fallback');
+      imageUrl = trackInfo.imageUrl || '';
+    }
+  } catch (artworkError) {
+    console.log('[Nicotine+] ⚠ Artwork API error, using DOM fallback:', artworkError.message);
+    imageUrl = trackInfo.imageUrl || '';
+  }
+
+  console.log('[Nicotine+] Final Image URL:', imageUrl || '(none)');
+
   try {
     const response = await fetch(BRIDGE_URL, {
       method: 'POST',
@@ -248,6 +329,7 @@ async function sendToNicotine(trackInfo) {
         album: trackInfo.albumName,
         track_id: trackInfo.trackId,
         duration: trackInfo.duration,
+        image_url: imageUrl,
         auto_download: autoDownload,
         metadata_override: metadataOverride,
         format_preference: formatPreference
@@ -546,6 +628,33 @@ async function sendAlbumToNicotine(albumInfo, tracks) {
   console.log('[Album] Auto-download:', autoDownload);
   console.log('[Album] Format preference:', formatPreference);
 
+  // Fetch album artwork from Spotify API (use first track's artist and track name)
+  let imageUrl = '';
+  if (tracks.length > 0) {
+    try {
+      console.log('[Album] Fetching album artwork from Spotify API...');
+      const firstTrack = tracks[0];
+      const artworkResponse = await fetch('http://127.0.0.1:3848/get-album-artwork', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          artist: firstTrack.artist,
+          track: firstTrack.track
+        })
+      });
+
+      if (artworkResponse.ok) {
+        const artworkData = await artworkResponse.json();
+        if (artworkData.success && artworkData.imageUrl) {
+          imageUrl = artworkData.imageUrl;
+          console.log('[Album] ✓ Got album artwork from API:', imageUrl);
+        }
+      }
+    } catch (artworkError) {
+      console.log('[Album] ⚠ Artwork API error:', artworkError.message);
+    }
+  }
+
   try {
     const response = await fetch(BRIDGE_ALBUM_URL, {
       method: 'POST',
@@ -557,6 +666,7 @@ async function sendAlbumToNicotine(albumInfo, tracks) {
         album_name: albumInfo.albumName,
         album_artist: albumInfo.albumArtist,
         year: albumInfo.year,
+        image_url: imageUrl,
         tracks: tracks,
         auto_download: autoDownload,
         metadata_override: metadataOverride,

@@ -34,10 +34,13 @@ const patternPreviewAlbum = document.getElementById('patternPreviewAlbum');
 const fileNamingContainer = document.getElementById('fileNamingContainer');
 const toggleFileNamingBtn = document.getElementById('toggleFileNamingBtn');
 const progressBarsContainer = document.getElementById('progressBarsContainer');
+const progressBarsArea = document.getElementById('progressBarsArea');
 const progressSection = document.getElementById('progressSection');
 const currentTrackInfo = document.getElementById('currentTrackInfo');
+const albumArtThumbnail = document.getElementById('albumArtThumbnail');
 const downloadMetadataSettings = document.getElementById('downloadMetadataSettings');
 const toggleDownloadMetadataBtn = document.getElementById('toggleDownloadMetadataBtn');
+const debugWindowsToggle = document.getElementById('debugWindowsToggle');
 
 // Console management
 const MAX_CONSOLE_ENTRIES = 50;
@@ -84,8 +87,8 @@ function safeStorageSyncSet(data, callback) {
   }
 }
 
-// Track color assignments for concurrent tracks
-const trackColors = ['#B9FF37', '#6a9fb5', '#ffa500', '#ff6ec7', '#7fff00', '#00bfff', '#ff4500', '#9370db'];
+// Track color assignments for concurrent tracks (excluding accent green)
+const trackColors = ['#6a9fb5', '#ffa500', '#ff6ec7', '#00bfff', '#ff4500', '#9370db', '#32cd32', '#ff69b4'];
 let trackColorMap = new Map(); // trackId -> color
 let nextColorIndex = 0;
 
@@ -372,9 +375,23 @@ function addTrackInfoHover(barContainer) {
     const artist = barContainer.getAttribute('data-artist') || '';
     const track = barContainer.getAttribute('data-track') || '';
     const album = barContainer.getAttribute('data-album') || '';
+    const trackId = barContainer.getAttribute('data-track-id');
+    const imageUrl = barContainer.getAttribute('data-image-url') || '';
 
     const trackInfo = generateTooltipText(artist, track, album);
+    const trackColor = getTrackColor(trackId);
+
     currentTrackInfo.textContent = trackInfo;
+    currentTrackInfo.style.color = trackColor || '#B9FF37'; // Use track color or default accent
+
+    // Show album artwork thumbnail if available
+    if (imageUrl) {
+      console.log('[Hydra+ PROGRESS] Showing thumbnail:', imageUrl);
+      albumArtThumbnail.src = imageUrl;
+      albumArtThumbnail.classList.add('visible');
+    } else {
+      console.log('[Hydra+ PROGRESS] No imageUrl for hover - thumbnail hidden');
+    }
   });
 }
 
@@ -431,11 +448,11 @@ function addFolderClickHandler(barContainer) {
 }
 
 // Create progress bar in SEARCHING state (50% opacity)
-function createSearchingProgressBar(trackId, message) {
+async function createSearchingProgressBar(trackId, message) {
   console.log('[Hydra+ PROGRESS] 🔍 Creating searching bar for trackId:', trackId);
 
   // Check if bar already exists
-  const existingBar = progressBarsContainer.querySelector(`[data-track-id="${trackId}"]`);
+  const existingBar = progressBarsArea.querySelector(`[data-track-id="${trackId}"]`);
   if (existingBar) {
     console.log('[Hydra+ PROGRESS] Bar already exists for:', trackId);
     return; // Don't create duplicate
@@ -455,6 +472,36 @@ function createSearchingProgressBar(trackId, message) {
 
   console.log('[Hydra+ PROGRESS] Parsed search info:', { artist, track, searchInfo });
 
+  // Fetch album artwork immediately from Spotify API
+  let imageUrl = '';
+  if (artist && track) {
+    try {
+      console.log('[Hydra+ PROGRESS] Fetching artwork for:', artist, '-', track);
+      const artworkResponse = await fetch('http://127.0.0.1:3848/get-album-artwork', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ artist, track })
+      });
+
+      if (artworkResponse.ok) {
+        const artworkData = await artworkResponse.json();
+        if (artworkData.success && artworkData.imageUrl) {
+          imageUrl = artworkData.imageUrl;
+          console.log('[Hydra+ PROGRESS] ✓ Got artwork:', imageUrl.substring(0, 50) + '...');
+
+          // Store in state server for later metadata processing
+          fetch('http://127.0.0.1:3847/store-artwork', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ trackId, imageUrl })
+          }).catch(err => console.warn('[Hydra+ PROGRESS] Failed to cache artwork:', err));
+        }
+      }
+    } catch (error) {
+      console.warn('[Hydra+ PROGRESS] Failed to fetch artwork:', error.message);
+    }
+  }
+
   // Get track color
   const trackColor = getTrackColor(trackId);
 
@@ -465,6 +512,11 @@ function createSearchingProgressBar(trackId, message) {
   barContainer.setAttribute('data-artist', artist);
   barContainer.setAttribute('data-track', track);
   barContainer.setAttribute('data-album', '');
+
+  // Store image URL for thumbnail display (if we got one)
+  if (imageUrl) {
+    barContainer.setAttribute('data-image-url', imageUrl);
+  }
 
   // Add hover listener to show track info in header
   addTrackInfoHover(barContainer);
@@ -479,15 +531,16 @@ function createSearchingProgressBar(trackId, message) {
   fill.style.backgroundColor = trackColor || '#B9FF37';
 
   barContainer.appendChild(fill);
-  progressBarsContainer.appendChild(barContainer);
+  progressBarsArea.appendChild(barContainer);
 
-  // Store state with parsed artist/track
+  // Store state with parsed artist/track and imageUrl
   progressBarStates.set(trackId, {
     state: PROGRESS_BAR_STATES.SEARCHING,
     artist: artist,
     track: track,
     album: '',
     filePath: '',
+    imageUrl: imageUrl,
     progress: 5,
     createdAt: Date.now(),
     completedAt: null
@@ -504,7 +557,7 @@ function createInitialProgressBar(trackId, message) {
   const filename = message.replace('Downloading:', '').trim();
 
   // Check if bar already exists (from searching state)
-  let barContainer = progressBarsContainer.querySelector(`[data-track-id="${trackId}"]`);
+  let barContainer = progressBarsArea.querySelector(`[data-track-id="${trackId}"]`);
 
   if (barContainer) {
     // BAR EXISTS - Transition from SEARCHING to DOWNLOADING
@@ -556,7 +609,7 @@ function createInitialProgressBar(trackId, message) {
     fill.style.backgroundColor = trackColor || '#B9FF37';
 
     barContainer.appendChild(fill);
-    progressBarsContainer.appendChild(barContainer);
+    progressBarsArea.appendChild(barContainer);
 
     // Store state
     progressBarStates.set(trackId, {
@@ -632,7 +685,7 @@ function updateProgressBars(activeDownloads) {
 
   // Update progress from activeDownloads
   for (const [trackId, progressData] of Object.entries(activeDownloads)) {
-    const { filename, artist, track, album, progress, filePath } = progressData;
+    const { filename, artist, track, album, progress, filePath, imageUrl } = progressData;
 
     // Update or create state
     if (!progressBarStates.has(trackId)) {
@@ -643,6 +696,7 @@ function updateProgressBars(activeDownloads) {
         track: track || '',
         album: album || '',
         filePath: filePath || '',
+        imageUrl: imageUrl || '',
         progress: progress,
         createdAt: now,
         completedAt: null
@@ -654,6 +708,7 @@ function updateProgressBars(activeDownloads) {
       state.track = track || state.track;
       state.album = album || state.album;
       state.filePath = filePath || state.filePath;
+      state.imageUrl = imageUrl || state.imageUrl;
       state.progress = progress;
 
       // Transition to completed state if progress = 100
@@ -671,7 +726,7 @@ function updateProgressBars(activeDownloads) {
   // 1. Completed more than 2 minutes ago
   // 2. User manually clears them
   const TWO_MINUTES = 2 * 60 * 1000;
-  const existingBars = progressBarsContainer.querySelectorAll('.vertical-progress-bar');
+  const existingBars = progressBarsArea.querySelectorAll('.vertical-progress-bar');
   existingBars.forEach(bar => {
     const trackId = bar.getAttribute('data-track-id');
     const state = progressBarStates.get(trackId);
@@ -688,12 +743,12 @@ function updateProgressBars(activeDownloads) {
 
   // Update all bars based on progressBarStates
   for (const [trackId, state] of progressBarStates.entries()) {
-    const { artist, track, album, progress, filePath } = state;
+    const { artist, track, album, progress, filePath, imageUrl } = state;
     const isComplete = progress >= 100;
 
     // Debug: Log metadata
     if (artist || track) {
-      console.log('[Hydra+ PROGRESS] Metadata for', trackId.substring(0, 10), ':', { artist, track, album });
+      console.log('[Hydra+ PROGRESS] Metadata for', trackId.substring(0, 10), ':', { artist, track, album, imageUrl: imageUrl || '(none)' });
     }
 
     // Get track color
@@ -704,7 +759,7 @@ function updateProgressBars(activeDownloads) {
     console.log('[Hydra+ PROGRESS] Tooltip text:', tooltipText);
 
     // Find existing bar or create new one
-    let barContainer = progressBarsContainer.querySelector(`[data-track-id="${trackId}"]`);
+    let barContainer = progressBarsArea.querySelector(`[data-track-id="${trackId}"]`);
 
     if (!barContainer) {
       // Create new vertical bar
@@ -719,6 +774,11 @@ function updateProgressBars(activeDownloads) {
       // Store file path for folder opening
       if (filePath) {
         barContainer.setAttribute('data-file-path', filePath);
+      }
+
+      // Store image URL for thumbnail display
+      if (imageUrl) {
+        barContainer.setAttribute('data-image-url', imageUrl);
       }
 
       // Add hover listener to show track info in header
@@ -742,13 +802,18 @@ function updateProgressBars(activeDownloads) {
       }
 
       barContainer.appendChild(fill);
-      progressBarsContainer.appendChild(barContainer);
+      progressBarsArea.appendChild(barContainer);
     } else {
       // Update existing bar
       console.log('[Hydra+ PROGRESS] Updating bar for:', tooltipText, 'progress:', progress, 'state:', state.state);
 
       // Update state class
       barContainer.className = `vertical-progress-bar state-${state.state}`;
+
+      // Update data attributes (including imageUrl if it becomes available)
+      if (imageUrl && !barContainer.getAttribute('data-image-url')) {
+        barContainer.setAttribute('data-image-url', imageUrl);
+      }
 
       const fill = barContainer.querySelector('.progress-bar-fill-vertical');
       if (fill) {
@@ -815,6 +880,11 @@ setInterval(() => {
 // Add mouseleave listener to clear track info when mouse leaves progress bars
 progressBarsContainer.addEventListener('mouseleave', () => {
   currentTrackInfo.textContent = '';
+  currentTrackInfo.style.color = '#B9FF37'; // Reset to default accent color
+
+  // Hide album artwork thumbnail
+  albumArtThumbnail.classList.remove('visible');
+  albumArtThumbnail.src = '';
 });
 
 // Demo mode: Simulate events for testing (remove this in production)
@@ -886,7 +956,7 @@ function updateFormatLabels() {
 
 // Load saved settings immediately
 async function loadSettings() {
-  chrome.storage.sync.get(['autoDownload', 'formatPreference', 'metadataOverride', 'spotifyClientId', 'spotifyClientSecret', 'spotifyApiConnected'], async (data) => {
+  chrome.storage.sync.get(['autoDownload', 'formatPreference', 'metadataOverride', 'spotifyClientId', 'spotifyClientSecret', 'spotifyApiConnected', 'debugWindows'], async (data) => {
     // Auto-download defaults to true
     autoDownloadToggle.checked = data.autoDownload !== false;
 
@@ -896,6 +966,7 @@ async function loadSettings() {
     updateFormatLabels();
 
     metadataOverrideToggle.checked = data.metadataOverride !== false; // Default to true
+    debugWindowsToggle.checked = data.debugWindows === true; // Default to false
     spotifyClientId.value = data.spotifyClientId || '';
     spotifyClientSecret.value = data.spotifyClientSecret || '';
 
@@ -1006,6 +1077,15 @@ metadataOverrideToggle.addEventListener('change', () => {
     console.log('Metadata override setting saved:', metadataOverride);
   });
   updateCredentialsSectionVisibility();
+});
+
+debugWindowsToggle.addEventListener('change', () => {
+  const debugWindows = debugWindowsToggle.checked;
+  safeStorageSyncSet({ debugWindows }, () => {
+    console.log('[Hydra+] Debug windows setting saved:', debugWindows);
+  });
+  // Send to server immediately
+  sendDebugSettingToServer();
 });
 
 // Track server status globally

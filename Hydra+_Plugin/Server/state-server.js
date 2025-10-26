@@ -111,9 +111,15 @@ function addEvent(type, message, trackId = null) {
 }
 
 /**
+ * Artwork cache for temporary storage
+ * Maps trackId → imageUrl for use during metadata processing
+ */
+const artworkCache = new Map();
+
+/**
  * Update or add download progress
  */
-function updateDownloadProgress(trackId, filename, progress, bytesDownloaded, totalBytes, artist = '', track = '', album = '', filePath = '') {
+function updateDownloadProgress(trackId, filename, progress, bytesDownloaded, totalBytes, artist = '', track = '', album = '', filePath = '', imageUrl = '') {
   const now = Date.now();
   const existingEntry = activeDownloads.get(trackId);
 
@@ -130,6 +136,7 @@ function updateDownloadProgress(trackId, filename, progress, bytesDownloaded, to
     bytesDownloaded,
     totalBytes,
     filePath,
+    imageUrl,
     lastUpdate: now,
     completedAt: progress >= 100 ? (existingEntry?.completedAt || now) : null
   });
@@ -337,7 +344,7 @@ const server = http.createServer(async (req, res) => {
     req.on('end', () => {
       try {
         const data = JSON.parse(body);
-        const { trackId, filename, progress, bytesDownloaded, totalBytes, artist, track, album, filePath } = data;
+        const { trackId, filename, progress, bytesDownloaded, totalBytes, artist, track, album, filePath, imageUrl } = data;
 
         // CRITICAL: Return immediately (fire-and-forget)
         res.writeHead(200, { 'Content-Type': 'application/json' });
@@ -348,7 +355,7 @@ const server = http.createServer(async (req, res) => {
           if (progress === 0 || progress >= 100 || Math.floor(progress) % 10 === 0) {
             console.log(`[Hydra+ STATE] ${filename.substring(0, 40)}: ${Math.round(progress)}%`);
           }
-          updateDownloadProgress(trackId, filename, progress, bytesDownloaded, totalBytes, artist, track, album, filePath);
+          updateDownloadProgress(trackId, filename, progress, bytesDownloaded, totalBytes, artist, track, album, filePath, imageUrl);
         });
       } catch (error) {
         console.error('[Hydra+ STATE] ✗ Progress error:', error);
@@ -650,6 +657,7 @@ const server = http.createServer(async (req, res) => {
           duration: data.duration || 0,
           format: data.format || data.format_preference || 'mp3',
           track_id: data.track_id || null,
+          image_url: data.image_url || '',
           auto_download: data.auto_download !== undefined ? data.auto_download : true,
           metadata_override: data.metadata_override !== false,  // Default to true
           processed: false,
@@ -709,6 +717,7 @@ const server = http.createServer(async (req, res) => {
           format_preference: (data.format || data.format_preference || 'MP3').toLowerCase(),
           album_id: data.album_id || data.albumId || null,
           year: data.year || null,
+          image_url: data.image_url || '',
           auto_download: data.auto_download !== undefined ? data.auto_download : true,
           metadata_override: data.metadata_override !== undefined ? data.metadata_override : true,
           processed: false,
@@ -859,6 +868,57 @@ const server = http.createServer(async (req, res) => {
     setTimeout(() => {
       process.exit(0);
     }, 500);
+
+    return;
+  }
+
+  // ============================================================================
+  // POST /store-artwork - Store artwork URL for a track
+  // ============================================================================
+  if (req.method === 'POST' && req.url === '/store-artwork') {
+    let body = '';
+
+    req.on('data', chunk => {
+      body += chunk.toString();
+    });
+
+    req.on('end', () => {
+      try {
+        const { trackId, imageUrl } = JSON.parse(body);
+
+        if (!trackId || !imageUrl) {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ success: false, error: 'Missing trackId or imageUrl' }));
+          return;
+        }
+
+        artworkCache.set(trackId, imageUrl);
+        console.log(`[Hydra+ STATE] ✓ Cached artwork for: ${trackId.substring(0, 10)}...`);
+
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: true }));
+      } catch (error) {
+        console.error('[Hydra+ STATE] ✗ Store artwork error:', error);
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: false, error: error.message }));
+      }
+    });
+
+    return;
+  }
+
+  // ============================================================================
+  // GET /get-artwork/:trackId - Retrieve cached artwork URL
+  // ============================================================================
+  if (req.method === 'GET' && req.url.startsWith('/get-artwork/')) {
+    const trackId = req.url.split('/get-artwork/')[1];
+    const imageUrl = artworkCache.get(trackId);
+
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({
+      success: !!imageUrl,
+      imageUrl: imageUrl || null
+    }));
 
     return;
   }

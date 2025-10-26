@@ -670,6 +670,46 @@ app.post('/test-spotify-credentials', async (req, res) => {
 });
 
 /**
+ * Get album artwork URL for a track
+ */
+app.post('/get-album-artwork', async (req, res) => {
+  try {
+    const { artist, track } = req.body;
+
+    if (!artist || !track) {
+      return res.status(400).json({
+        success: false,
+        error: 'Missing artist or track parameter'
+      });
+    }
+
+    log(`Fetching album artwork for: ${artist} - ${track}`);
+
+    // Search Spotify for track
+    const metadata = await searchSpotify(artist, track);
+
+    if (metadata && metadata.imageUrl) {
+      res.json({
+        success: true,
+        imageUrl: metadata.imageUrl,
+        year: metadata.year
+      });
+    } else {
+      res.json({
+        success: false,
+        error: 'Track not found or no artwork available'
+      });
+    }
+  } catch (error) {
+    log(`✗ Failed to get album artwork: ${error.message}`);
+    res.status(500).json({
+      success: false,
+      error: error.message
+    });
+  }
+});
+
+/**
  * Set rename pattern
  */
 app.post('/set-rename-pattern', (req, res) => {

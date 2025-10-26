@@ -540,7 +540,7 @@ class Plugin(BasePlugin):
         except Exception as e:
             self.log(f" Error in cleanup: {e}")
 
-    def _trigger_search(self, query, artist='', track='', album='', track_id='', duration=0, auto_download=False, metadata_override=True, search_type='track', format_preference='mp3'):
+    def _trigger_search(self, query, artist='', track='', album='', track_id='', duration=0, auto_download=False, metadata_override=True, search_type='track', format_preference='mp3', image_url=''):
         """
         Trigger a search in Nicotine+.
 
@@ -606,6 +606,7 @@ class Plugin(BasePlugin):
                     'track': track,
                     'album': album,
                     'track_id': track_id,
+                    'image_url': image_url,
                     'timestamp': time.time(),
                     'download_candidates': [],  # List of {file, user, score, size, attrs}
                     'current_attempt': -1,  # -1 = not started, 0+ = attempt index
@@ -660,7 +661,7 @@ class Plugin(BasePlugin):
             # Bridge might be restarting or offline temporarily
             return False
 
-    def _send_progress_update(self, track_id, filename, progress, bytes_downloaded, total_bytes, artist='', track='', album='', file_path=''):
+    def _send_progress_update(self, track_id, filename, progress, bytes_downloaded, total_bytes, artist='', track='', album='', file_path='', image_url=''):
         """Send download progress update to bridge server (fire-and-forget).
 
         Args:
@@ -673,6 +674,7 @@ class Plugin(BasePlugin):
             track: Track title (for tooltip display)
             album: Album name (for tooltip display)
             file_path: Full path to file (for folder opening)
+            image_url: Album artwork URL (for thumbnail display)
         """
         try:
             import json
@@ -690,7 +692,8 @@ class Plugin(BasePlugin):
                 'artist': artist,
                 'track': track,
                 'album': album,
-                'filePath': file_path
+                'filePath': file_path,
+                'imageUrl': image_url
             }
 
             req = Request(url,
@@ -852,10 +855,11 @@ class Plugin(BasePlugin):
                         monitored_downloads[virtual_path] = track_id
 
                         # Send progress update to bridge
-                        # Extract metadata for tooltip display
+                        # Extract metadata for tooltip and thumbnail display
                         artist = search_info.get('artist', '') if search_info else ''
                         track_name = search_info.get('track', '') if search_info else ''
                         album_name = search_info.get('album', '') if search_info else ''
+                        image_url = search_info.get('image_url', '') if search_info else ''
 
                         # For albums, send cumulative bytes instead of current track bytes
                         if search_info and search_info.get('type') == 'album' and 'album_track_id' in search_info:
@@ -870,9 +874,9 @@ class Plugin(BasePlugin):
                                     cumulative_bytes += tracks_to_download[i].get('file_size', 0)
                             cumulative_bytes += bytes_downloaded
 
-                            self._send_progress_update(track_id, filename, progress, cumulative_bytes, total_album_bytes, artist, track_name, album_name, real_path)
+                            self._send_progress_update(track_id, filename, progress, cumulative_bytes, total_album_bytes, artist, track_name, album_name, real_path, image_url)
                         else:
-                            self._send_progress_update(track_id, filename, progress, bytes_downloaded, total_bytes, artist, track_name, album_name, real_path)
+                            self._send_progress_update(track_id, filename, progress, bytes_downloaded, total_bytes, artist, track_name, album_name, real_path, image_url)
 
                         # Log progress updates (reduced verbosity for albums)
                         if search_info and search_info.get('type') == 'album':
@@ -2155,7 +2159,8 @@ class Plugin(BasePlugin):
                 album_name = search_info.get('album_name', 'Album')
                 artist = search_info.get('artist', '')
                 album_folder = search_info.get('album_folder_path', '')
-                self._send_progress_update(album_track_id, album_name, 100, 0, 0, artist, '', album_name, album_folder)
+                image_url = search_info.get('image_url', '')
+                self._send_progress_update(album_track_id, album_name, 100, 0, 0, artist, '', album_name, album_folder, image_url)
                 self.log(f"[PROGRESS] Album progress complete at 100%")
 
             # Check if album folder was created
@@ -2275,11 +2280,12 @@ class Plugin(BasePlugin):
             artist = search_info.get('artist', '')
             track = search_info.get('track', '')
             album = search_info.get('album', '')
+            image_url = search_info.get('image_url', '')
             track_display = f"{artist} - {track}"
             head_num = search_info.get('head_number', 1)
 
             # Send 100% progress to show completion in progress bar
-            self._send_progress_update(track_id_safe, filename, 100, 0, 0, artist, track, album, real_path)
+            self._send_progress_update(track_id_safe, filename, 100, 0, 0, artist, track, album, real_path, image_url)
             self.log(f"░░░░░▒▒▒▒▒▓▓▓▓▓ HEAD{head_num} COMPLETE ____ {track_display}")
 
             # Remove from active tracking NOW so monitoring thread stops tracking it
@@ -3211,6 +3217,7 @@ class Plugin(BasePlugin):
             album_name = search_data.get('album_name', '')
             album_artist = search_data.get('album_artist', '')
             year = search_data.get('year', '')
+            image_url = search_data.get('image_url', '')
             tracks = search_data.get('tracks', [])
             auto_download = search_data.get('auto_download', False)
             metadata_override = search_data.get('metadata_override', True)
@@ -3250,6 +3257,7 @@ class Plugin(BasePlugin):
                     'album_name': album_name,
                     'album_artist': album_artist,
                     'year': year,
+                    'image_url': image_url,
                     'tracks': tracks,  # List of track dicts with track_number, artist, track, album, track_id, duration
                     'auto_download': auto_download,
                     'metadata_override': metadata_override,
@@ -3385,6 +3393,7 @@ class Plugin(BasePlugin):
                         album = search.get('album', '')
                         track_id = search.get('track_id', '')
                         duration = search.get('duration', 0)
+                        image_url = search.get('image_url', '')
                         auto_download = search.get('auto_download', False)
                         metadata_override = search.get('metadata_override', True)
                         format_preference = search.get('format_preference', 'mp3')
@@ -3392,7 +3401,7 @@ class Plugin(BasePlugin):
                         if not query:
                             continue
 
-                        success = self._trigger_search(query, artist, track, album, track_id, duration, auto_download, metadata_override, 'track', format_preference)
+                        success = self._trigger_search(query, artist, track, album, track_id, duration, auto_download, metadata_override, 'track', format_preference, image_url)
 
                     if success:
                         # Mark as processed on server
