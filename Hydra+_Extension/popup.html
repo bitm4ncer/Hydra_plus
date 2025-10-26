@@ -602,20 +602,30 @@
     .progress-bars-area {
       display: flex;
       flex-direction: row;
-      gap: 6px;
+      gap: 12px;
       flex: 1; /* Take all remaining space */
       height: 100%;
       align-items: flex-end;
       justify-content: flex-start;
       overflow-x: auto;
       overflow-y: hidden; /* Hide vertical scrollbar */
-      scrollbar-width: none; /* Firefox */
-      -ms-overflow-style: none; /* IE/Edge */
+      scrollbar-width: thin; /* Firefox */
+      scrollbar-color: #B9FF37 transparent; /* Firefox: thumb track */
     }
 
-    /* Hide scrollbar for Chrome/Safari */
+    /* Custom scrollbar for Chrome/Safari - accent green */
     .progress-bars-area::-webkit-scrollbar {
-      display: none;
+      height: 6px;
+    }
+
+    .progress-bars-area::-webkit-scrollbar-track {
+      background: transparent;
+    }
+
+    .progress-bars-area::-webkit-scrollbar-thumb {
+      background: var(--scrollbar-color, #B9FF37);
+      border-radius: 3px;
+      transition: background 0.2s ease;
     }
 
     /* Thumbnail area - square for album covers */
@@ -641,6 +651,11 @@
       background-color: rgba(0, 0, 0, 0.3); /* Darker placeholder background for full track */
     }
 
+    /* Change bar color to track-specific color on hover */
+    .vertical-progress-bar:hover .progress-bar-fill-vertical {
+      background: var(--track-color) !important;
+    }
+
     @keyframes slideInUp {
       from {
         opacity: 0;
@@ -659,7 +674,7 @@
       bottom: 0;
       width: 100%;
       background: #B9FF37;
-      transition: height 0.3s ease, box-shadow 0.3s ease;
+      transition: height 0.3s ease, background 0.2s ease;
       min-height: 5%; /* Minimal height when starting (5% of container) */
     }
 

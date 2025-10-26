@@ -586,8 +586,10 @@ function createQueuedProgressBar(trackId, message) {
   const fill = document.createElement('div');
   fill.className = 'progress-bar-fill-vertical';
   fill.style.height = '0%'; // Start at 0% (hidden)
-  const desaturated = desaturateColor(trackColor || '#B9FF37', 0.3);
-  fill.style.background = `linear-gradient(to top, ${desaturated}, ${trackColor || '#B9FF37'})`;
+  fill.style.background = '#B9FF37'; // Default accent green
+
+  // Set CSS variable for hover color
+  barContainer.style.setProperty('--track-color', trackColor || '#B9FF37');
 
   barContainer.appendChild(fill);
   progressBarsArea.appendChild(barContainer);
@@ -722,8 +724,10 @@ async function createSearchingProgressBar(trackId, message) {
   const fill = document.createElement('div');
   fill.className = 'progress-bar-fill-vertical';
   fill.style.height = '5%'; // Start at 5%
-  const desaturated = desaturateColor(trackColor || '#B9FF37', 0.3);
-  fill.style.background = `linear-gradient(to top, ${desaturated}, ${trackColor || '#B9FF37'})`;
+  fill.style.background = '#B9FF37'; // Default accent green
+
+  // Set CSS variable for hover color
+  barContainer.style.setProperty('--track-color', trackColor || '#B9FF37');
 
   barContainer.appendChild(fill);
   progressBarsArea.appendChild(barContainer);
@@ -824,8 +828,10 @@ function createInitialProgressBar(trackId, message) {
   const fill = document.createElement('div');
   fill.className = 'progress-bar-fill-vertical';
   fill.style.height = '5%'; // Start at 5%
-  const desaturated = desaturateColor(trackColor || '#B9FF37', 0.3);
-  fill.style.background = `linear-gradient(to top, ${desaturated}, ${trackColor || '#B9FF37'})`;
+  fill.style.background = '#B9FF37'; // Default accent green
+
+  // Set CSS variable for hover color
+  barContainer.style.setProperty('--track-color', trackColor || '#B9FF37');
 
   barContainer.appendChild(fill);
   progressBarsArea.appendChild(barContainer);
@@ -1017,8 +1023,10 @@ function updateProgressBars(activeDownloads) {
       // Ensure minimum visibility (5% minimum)
       const displayProgress = Math.max(5, progress);
       fill.style.height = `${displayProgress}%`;
-      const desaturated = desaturateColor(trackColor || '#B9FF37', 0.3);
-  fill.style.background = `linear-gradient(to top, ${desaturated}, ${trackColor || '#B9FF37'})`;
+      fill.style.background = '#B9FF37'; // Default accent green
+
+  // Set CSS variable for hover color
+  barContainer.style.setProperty('--track-color', trackColor || '#B9FF37');
 
       // Add completed class if already at 100%
       if (isComplete) {
@@ -1065,8 +1073,10 @@ function updateProgressBars(activeDownloads) {
         // Ensure minimum visibility (5% minimum)
         const displayProgress = Math.max(5, progress);
         fill.style.height = `${displayProgress}%`;
-        const desaturated = desaturateColor(trackColor || '#B9FF37', 0.3);
-  fill.style.background = `linear-gradient(to top, ${desaturated}, ${trackColor || '#B9FF37'})`;
+        fill.style.background = '#B9FF37'; // Default accent green
+
+  // Set CSS variable for hover color
+  barContainer.style.setProperty('--track-color', trackColor || '#B9FF37');
 
         // Add completed class when reaching 100%
         if (isComplete) {
