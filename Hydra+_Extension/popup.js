@@ -179,6 +179,19 @@ function getTrackColor(trackId) {
 
 // Add event to console
 function addConsoleEvent(type, message, timestamp = null, trackId = null) {
+  // Filter out repetitive/spam messages
+  const spamMessages = [
+    'Bridge server connected',
+    'Bridge server disconnected',
+    'Debug mode enabled - restart required',
+    'Debug mode disabled - restart required'
+  ];
+
+  if (spamMessages.includes(message)) {
+    console.log('[Hydra+ Console] Filtered spam message:', message);
+    return; // Don't add to console
+  }
+
   const time = timestamp ? new Date(timestamp) : new Date();
   const timeStr = time.toLocaleTimeString('en-US', { hour12: false });
 
