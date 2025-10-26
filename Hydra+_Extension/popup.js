@@ -1165,9 +1165,21 @@ function updateProgressBars(activeDownloads) {
   console.log('[Hydra+ PROGRESS] Active bars:', progressBarStates.size);
   if (progressBarStates.size > 0) {
     console.log('[Hydra+ PROGRESS] ✓ Showing', progressBarStates.size, 'vertical progress bar(s)');
+
+    // Scroll to the right to show latest downloads
+    scrollProgressBarsToRight();
   } else {
     console.log('[Hydra+ PROGRESS] No progress bars - all cleared or expired');
   }
+}
+
+// Scroll progress bars area to the right to show latest downloads
+function scrollProgressBarsToRight() {
+  // Use requestAnimationFrame to ensure DOM is updated before scrolling
+  requestAnimationFrame(() => {
+    progressBarsArea.scrollLeft = progressBarsArea.scrollWidth;
+    console.log('[Hydra+ PROGRESS] Scrolled to right:', progressBarsArea.scrollLeft);
+  });
 }
 
 // Clear all progress bars (section remains visible, just empty)
