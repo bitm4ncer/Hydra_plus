@@ -159,6 +159,14 @@ function desaturateColor(hex, amount = 0.6) {
   return `#${toHex(r2)}${toHex(g2)}${toHex(b2)}`;
 }
 
+// Helper function to convert hex to RGB string for comparison
+function hexToRgb(hex) {
+  const r = parseInt(hex.slice(1, 3), 16);
+  const g = parseInt(hex.slice(3, 5), 16);
+  const b = parseInt(hex.slice(5, 7), 16);
+  return `${r}, ${g}, ${b}`;
+}
+
 // Get or assign color for a track
 function getTrackColor(trackId) {
   if (!trackId) return null;
@@ -208,16 +216,14 @@ function addConsoleEvent(type, message, timestamp = null, trackId = null) {
   // Add to DOM
   const entry = document.createElement('div');
 
-  // Add track color if trackId provided
-  const trackColor = getTrackColor(trackId);
-  const messageStyle = trackColor ? ` style="color: ${trackColor};"` : '';
-  const hasColorClass = trackColor ? ' has-track-color' : '';
+  // Store trackId on message for hover matching (no color styling)
+  const trackIdAttr = trackId ? ` data-track-id="${trackId}"` : '';
 
-  entry.className = `console-entry console-${type}${hasColorClass}`;
+  entry.className = `console-entry console-${type}`;
 
   entry.innerHTML = `
     <span class="console-time">${timeStr}</span>
-    <span class="console-message"${messageStyle}>${message}</span>
+    <span class="console-message"${trackIdAttr}>${message}</span>
   `;
 
   consoleContent.appendChild(entry);
@@ -276,16 +282,14 @@ function loadConsoleEvents() {
       consoleEvents.forEach(event => {
         const entry = document.createElement('div');
 
-        // Add track color if trackId exists
-        const trackColor = getTrackColor(event.trackId);
-        const messageStyle = trackColor ? ` style="color: ${trackColor};"` : '';
-        const hasColorClass = trackColor ? ' has-track-color' : '';
+        // Store trackId on message for hover matching (no color styling)
+        const trackIdAttr = event.trackId ? ` data-track-id="${event.trackId}"` : '';
 
-        entry.className = `console-entry console-${event.type}${hasColorClass}`;
+        entry.className = `console-entry console-${event.type}`;
 
         entry.innerHTML = `
           <span class="console-time">${event.time}</span>
-          <span class="console-message"${messageStyle}>${event.message}</span>
+          <span class="console-message"${trackIdAttr}>${event.message}</span>
         `;
         consoleContent.appendChild(entry);
 
@@ -467,13 +471,20 @@ function addTrackInfoHover(barContainer) {
     const album = barContainer.getAttribute('data-album') || '';
     const trackId = barContainer.getAttribute('data-track-id');
     const imageUrl = barContainer.getAttribute('data-image-url') || '';
-    const trackColor = barContainer.getAttribute('data-track-color') || '#B9FF37';
-
     const trackInfo = generateTooltipText(artist, track, album);
 
-    // Show track info with unique color code in tooltip
-    currentTrackInfo.textContent = trackInfo + ' (' + trackColor + ')';
-    currentTrackInfo.style.color = trackColor;
+    // Show track info in accent green
+    currentTrackInfo.textContent = trackInfo;
+    currentTrackInfo.style.color = '#B9FF37'; // Accent green on hover
+
+    // Highlight all console logs for this track (accent green)
+    const allConsoleMessages = consoleContent.querySelectorAll('.console-message');
+    allConsoleMessages.forEach(messageSpan => {
+      const messageTrackId = messageSpan.getAttribute('data-track-id');
+      if (messageTrackId === trackId) {
+        messageSpan.style.color = '#B9FF37'; // Change to accent green
+      }
+    });
 
     // Show album artwork thumbnail if available
     if (imageUrl) {
@@ -483,6 +494,18 @@ function addTrackInfoHover(barContainer) {
     } else {
       console.log('[Hydra+ PROGRESS] No imageUrl for hover - thumbnail hidden');
     }
+  });
+
+  barContainer.addEventListener('mouseleave', () => {
+    // Reset tooltip color to default
+    currentTrackInfo.textContent = '';
+    currentTrackInfo.style.color = '#B9FF37';
+
+    // Reset all console logs back to light gray
+    const allConsoleMessages = consoleContent.querySelectorAll('.console-message');
+    allConsoleMessages.forEach(messageSpan => {
+      messageSpan.style.color = ''; // Remove inline style, use CSS default (#6a6a6a)
+    });
   });
 }
 
@@ -588,10 +611,7 @@ function createQueuedProgressBar(trackId, message) {
   const fill = document.createElement('div');
   fill.className = 'progress-bar-fill-vertical';
   fill.style.height = '0%'; // Start at 0% (hidden)
-  fill.style.background = '#B9FF37'; // Default accent green
-
-  // Set CSS variable for hover color
-  barContainer.style.setProperty('--track-color', trackColor || '#B9FF37');
+  fill.style.background = '#B9FF37'; // Always accent green
 
   barContainer.appendChild(fill);
   progressBarsArea.appendChild(barContainer);
@@ -726,10 +746,7 @@ async function createSearchingProgressBar(trackId, message) {
   const fill = document.createElement('div');
   fill.className = 'progress-bar-fill-vertical';
   fill.style.height = '5%'; // Start at 5%
-  fill.style.background = '#B9FF37'; // Default accent green
-
-  // Set CSS variable for hover color
-  barContainer.style.setProperty('--track-color', trackColor || '#B9FF37');
+  fill.style.background = '#B9FF37'; // Always accent green
 
   barContainer.appendChild(fill);
   progressBarsArea.appendChild(barContainer);
@@ -830,10 +847,7 @@ function createInitialProgressBar(trackId, message) {
   const fill = document.createElement('div');
   fill.className = 'progress-bar-fill-vertical';
   fill.style.height = '5%'; // Start at 5%
-  fill.style.background = '#B9FF37'; // Default accent green
-
-  // Set CSS variable for hover color
-  barContainer.style.setProperty('--track-color', trackColor || '#B9FF37');
+  fill.style.background = '#B9FF37'; // Always accent green
 
   barContainer.appendChild(fill);
   progressBarsArea.appendChild(barContainer);
@@ -1025,10 +1039,7 @@ function updateProgressBars(activeDownloads) {
       // Ensure minimum visibility (5% minimum)
       const displayProgress = Math.max(5, progress);
       fill.style.height = `${displayProgress}%`;
-      fill.style.background = '#B9FF37'; // Default accent green
-
-  // Set CSS variable for hover color
-  barContainer.style.setProperty('--track-color', trackColor || '#B9FF37');
+      fill.style.background = '#B9FF37'; // Always accent green
 
       // Add completed class if already at 100%
       if (isComplete) {
@@ -1075,10 +1086,7 @@ function updateProgressBars(activeDownloads) {
         // Ensure minimum visibility (5% minimum)
         const displayProgress = Math.max(5, progress);
         fill.style.height = `${displayProgress}%`;
-        fill.style.background = '#B9FF37'; // Default accent green
-
-  // Set CSS variable for hover color
-  barContainer.style.setProperty('--track-color', trackColor || '#B9FF37');
+        fill.style.background = '#B9FF37'; // Always accent green
 
         // Add completed class when reaching 100%
         if (isComplete) {

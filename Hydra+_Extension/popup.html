@@ -528,27 +528,13 @@
     }
 
     .console-message {
-      color: #b3b3b3;
+      color: #6a6a6a; /* Light gray default */
       word-break: break-word;
+      transition: color 0.2s ease;
     }
 
-    /* Event type colors - track color takes precedence when available */
-    /* Fallback colors when no track color */
-    .console-success:not(.has-track-color) .console-message {
-      color: #B9FF37;
-    }
-
-    .console-error:not(.has-track-color) .console-message {
-      color: #e22134;
-    }
-
-    .console-warning:not(.has-track-color) .console-message {
-      color: #ffa500;
-    }
-
-    .console-info:not(.has-track-color) .console-message {
-      color: #6a9fb5;
-    }
+    /* All console messages use default light gray color */
+    /* No type-based colors - all logs are light gray */
 
     /* Progress section above Activity Log - always visible, matches console-container styling */
     .progress-section {
@@ -646,14 +632,15 @@
       height: 100%;
       position: relative;
       animation: slideInUp 0.3s ease;
-      transition: opacity 0.3s ease;
+      opacity: 0.8; /* 80% opacity normal state */
+      transition: opacity 0.2s ease;
       cursor: pointer;
       background-color: rgba(0, 0, 0, 0.3); /* Darker placeholder background for full track */
     }
 
-    /* Change bar color to track-specific color on hover */
-    .vertical-progress-bar:hover .progress-bar-fill-vertical {
-      background: var(--track-color) !important;
+    /* Increase opacity on hover - no color change */
+    .vertical-progress-bar:hover {
+      opacity: 1; /* 100% opacity on hover */
     }
 
     @keyframes slideInUp {
