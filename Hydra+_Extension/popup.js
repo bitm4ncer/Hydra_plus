@@ -96,6 +96,24 @@ const trackColors = ['#ff00ff', '#ff5500', '#ffff00', '#0066ff', '#ffccdd', '#ff
 let trackColorMap = new Map(); // trackId -> color
 let nextColorIndex = 0;
 
+// Fixed position tracking for progress bars (never reorders)
+let nextPositionNumber = 1; // Auto-incrementing position counter
+
+// Load position counter from storage on startup
+chrome.storage.local.get(['nextPositionNumber'], (data) => {
+  if (data.nextPositionNumber) {
+    nextPositionNumber = data.nextPositionNumber;
+    console.log('[Hydra+ Position] Loaded position counter:', nextPositionNumber);
+  }
+});
+
+// Save position counter to storage whenever it changes
+function savePositionCounter() {
+  chrome.storage.local.set({ nextPositionNumber: nextPositionNumber }, () => {
+    console.log('[Hydra+ Position] Saved position counter:', nextPositionNumber);
+  });
+}
+
 // Helper function to desaturate a hex color by reducing saturation
 function desaturateColor(hex, amount = 0.6) {
   // Convert hex to RGB
@@ -335,6 +353,10 @@ clearConsoleBtn.addEventListener('click', async () => {
   // Clear track color map to reset colors
   trackColorMap.clear();
   nextColorIndex = 0;
+
+  // Reset position counter
+  nextPositionNumber = 1;
+  savePositionCounter();
 
   // Clear progress bars
   clearProgressBars();
@@ -603,6 +625,10 @@ function createQueuedProgressBar(trackId, message) {
   // Get unique track color (matches console log color)
   const trackColor = getTrackColor(trackId);
 
+  // Assign fixed position number (never changes)
+  const position = nextPositionNumber++;
+  savePositionCounter(); // Persist to storage
+
   // Create new vertical bar at 0% height (completely hidden but present)
   const barContainer = document.createElement('div');
   barContainer.className = 'vertical-progress-bar state-queued'; // Add queued state class
@@ -611,6 +637,8 @@ function createQueuedProgressBar(trackId, message) {
   barContainer.setAttribute('data-artist', artist);
   barContainer.setAttribute('data-track', track);
   barContainer.setAttribute('data-album', '');
+  barContainer.setAttribute('data-position', position); // Fixed position number
+  barContainer.style.setProperty('--position', position); // CSS ordering
 
   // Add hover listener to show track info in header
   addTrackInfoHover(barContainer);
@@ -636,6 +664,7 @@ function createQueuedProgressBar(trackId, message) {
     filePath: '',
     imageUrl: '',
     progress: 0,
+    position: position, // Fixed position number
     createdAt: Date.now(),
     completedAt: null
   });
@@ -733,6 +762,10 @@ async function createSearchingProgressBar(trackId, message) {
   // Get unique track color (matches console log color)
   const trackColor = getTrackColor(trackId);
 
+  // Assign fixed position number (never changes)
+  const position = nextPositionNumber++;
+  savePositionCounter(); // Persist to storage
+
   // Create new vertical bar at 5% height with 50% opacity
   const barContainer = document.createElement('div');
   barContainer.className = 'vertical-progress-bar state-searching'; // Add searching state class
@@ -741,6 +774,8 @@ async function createSearchingProgressBar(trackId, message) {
   barContainer.setAttribute('data-artist', artist);
   barContainer.setAttribute('data-track', track);
   barContainer.setAttribute('data-album', '');
+  barContainer.setAttribute('data-position', position); // Fixed position number
+  barContainer.style.setProperty('--position', position); // CSS ordering
 
   // Store image URL for thumbnail display (if we got one)
   if (imageUrl) {
@@ -771,6 +806,7 @@ async function createSearchingProgressBar(trackId, message) {
     filePath: '',
     imageUrl: imageUrl,
     progress: 5,
+    position: position, // Fixed position number
     createdAt: Date.now(),
     completedAt: null
   });
@@ -839,6 +875,10 @@ function createInitialProgressBar(trackId, message) {
   // Get unique track color (matches console log color)
   const trackColor = getTrackColor(trackId);
 
+  // Assign fixed position number (never changes)
+  const position = nextPositionNumber++;
+  savePositionCounter(); // Persist to storage
+
   // Create new vertical bar at 5% height with 100% opacity
   barContainer = document.createElement('div');
   barContainer.className = 'vertical-progress-bar state-downloading';
@@ -847,6 +887,8 @@ function createInitialProgressBar(trackId, message) {
   barContainer.setAttribute('data-artist', '');
   barContainer.setAttribute('data-track', '');
   barContainer.setAttribute('data-album', '');
+  barContainer.setAttribute('data-position', position); // Fixed position number
+  barContainer.style.setProperty('--position', position); // CSS ordering
 
   // Add hover listener to show track info in header
   addTrackInfoHover(barContainer);
@@ -871,6 +913,7 @@ function createInitialProgressBar(trackId, message) {
     album: '',
     filePath: '',
     progress: 5,
+    position: position, // Fixed position number
     createdAt: Date.now(),
     completedAt: null
   });
@@ -1018,6 +1061,12 @@ function updateProgressBars(activeDownloads) {
     let barContainer = progressBarsArea.querySelector(`[data-track-id="${trackId}"]`);
 
     if (!barContainer) {
+      // Assign fixed position number (never changes)
+      const position = state.position || nextPositionNumber++;
+      if (!state.position) {
+        savePositionCounter(); // Persist to storage if we incremented
+      }
+
       // Create new vertical bar
       console.log('[Hydra+ PROGRESS] Creating new bar for:', tooltipText, 'progress:', progress, 'state:', state.state);
       barContainer = document.createElement('div');
@@ -1027,6 +1076,8 @@ function updateProgressBars(activeDownloads) {
       barContainer.setAttribute('data-artist', artist || '');
       barContainer.setAttribute('data-track', track || '');
       barContainer.setAttribute('data-album', album || '');
+      barContainer.setAttribute('data-position', position); // Fixed position number
+      barContainer.style.setProperty('--position', position); // CSS ordering
 
       // Store file path for folder opening
       if (filePath) {
@@ -1060,26 +1111,8 @@ function updateProgressBars(activeDownloads) {
 
       barContainer.appendChild(fill);
 
-      // Insert bar in correct position based on createdAt timestamp
-      // This maintains consistent visual order even when bars are created out of order
-      const existingBars = Array.from(progressBarsArea.querySelectorAll('.vertical-progress-bar'));
-      let insertPosition = null;
-
-      for (const existingBar of existingBars) {
-        const existingTrackId = existingBar.getAttribute('data-track-id');
-        const existingState = progressBarStates.get(existingTrackId);
-
-        if (existingState && existingState.createdAt > state.createdAt) {
-          insertPosition = existingBar;
-          break;
-        }
-      }
-
-      if (insertPosition) {
-        progressBarsArea.insertBefore(barContainer, insertPosition);
-      } else {
-        progressBarsArea.appendChild(barContainer);
-      }
+      // Always append to the right (position handled by CSS order property)
+      progressBarsArea.appendChild(barContainer);
     } else {
       // Update existing bar
       console.log('[Hydra+ PROGRESS] Updating bar for:', tooltipText, 'progress:', progress, 'state:', state.state);

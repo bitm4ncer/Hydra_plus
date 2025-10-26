@@ -635,15 +635,17 @@
       position: relative;
       animation: slideInUp 0.3s ease;
       opacity: 0.8; /* 80% opacity normal state */
-      transition: opacity 0.2s ease;
+      transition: all 0.2s ease;
       cursor: pointer;
       background-color: rgba(0, 0, 0, 0.3); /* Darker placeholder background for full track */
       flex-shrink: 0; /* Don't shrink - allow overflow for scrolling */
+      order: var(--position); /* CSS ordering based on fixed position number */
     }
 
     /* Increase opacity on hover - no color change */
     .vertical-progress-bar:hover {
       opacity: 1; /* 100% opacity on hover */
+      width: 18px;
     }
 
     @keyframes slideInUp {
