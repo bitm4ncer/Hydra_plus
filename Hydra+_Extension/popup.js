@@ -1950,3 +1950,34 @@ undockBtn.addEventListener('click', () => {
   // If user wants auto-close behavior, uncomment:
   // window.close();
 });
+
+// ===== GRAB-AND-DRAG SCROLLING FOR PROGRESS BARS =====
+
+let isDown = false;
+let startX;
+let scrollLeft;
+
+progressBarsArea.addEventListener('mousedown', (e) => {
+  isDown = true;
+  progressBarsArea.style.cursor = 'grabbing';
+  startX = e.pageX - progressBarsArea.offsetLeft;
+  scrollLeft = progressBarsArea.scrollLeft;
+});
+
+progressBarsArea.addEventListener('mouseleave', () => {
+  isDown = false;
+  progressBarsArea.style.cursor = 'grab';
+});
+
+progressBarsArea.addEventListener('mouseup', () => {
+  isDown = false;
+  progressBarsArea.style.cursor = 'grab';
+});
+
+progressBarsArea.addEventListener('mousemove', (e) => {
+  if (!isDown) return;
+  e.preventDefault();
+  const x = e.pageX - progressBarsArea.offsetLeft;
+  const walk = (x - startX) * 2; // Scroll speed multiplier
+  progressBarsArea.scrollLeft = scrollLeft - walk;
+});

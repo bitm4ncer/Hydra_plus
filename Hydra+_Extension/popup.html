@@ -597,6 +597,8 @@
       overflow-y: hidden; /* Hide vertical scrollbar */
       scrollbar-width: thin; /* Firefox */
       scrollbar-color: #B9FF37 transparent; /* Firefox: thumb track */
+      cursor: grab; /* Show grab cursor for drag scrolling */
+      user-select: none; /* Prevent text selection during drag */
     }
 
     /* Custom scrollbar for Chrome/Safari - accent green */
@@ -636,6 +638,7 @@
       transition: opacity 0.2s ease;
       cursor: pointer;
       background-color: rgba(0, 0, 0, 0.3); /* Darker placeholder background for full track */
+      flex-shrink: 0; /* Don't shrink - allow overflow for scrolling */
     }
 
     /* Increase opacity on hover - no color change */
