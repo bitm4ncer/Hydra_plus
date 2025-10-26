@@ -99,6 +99,9 @@ let nextColorIndex = 0;
 // Fixed position tracking for progress bars (never reorders)
 let nextPositionNumber = 1; // Auto-incrementing position counter
 
+// Track if we've done the initial scroll to right
+let hasScrolledToRight = false;
+
 // Load position counter from storage on startup
 chrome.storage.local.get(['nextPositionNumber'], (data) => {
   if (data.nextPositionNumber) {
@@ -1173,12 +1176,20 @@ function updateProgressBars(activeDownloads) {
   }
 }
 
-// Scroll progress bars area to the right to show latest downloads
+// Scroll progress bars area to the right to show latest downloads (only on first load)
 function scrollProgressBarsToRight() {
-  // Use requestAnimationFrame to ensure DOM is updated before scrolling
+  // Only scroll once on initial load, not on every update
+  if (hasScrolledToRight) {
+    return;
+  }
+
+  // Use double requestAnimationFrame to ensure all bars are fully rendered
   requestAnimationFrame(() => {
-    progressBarsArea.scrollLeft = progressBarsArea.scrollWidth;
-    console.log('[Hydra+ PROGRESS] Scrolled to right:', progressBarsArea.scrollLeft);
+    requestAnimationFrame(() => {
+      progressBarsArea.scrollLeft = progressBarsArea.scrollWidth;
+      hasScrolledToRight = true; // Mark as scrolled
+      console.log('[Hydra+ PROGRESS] Initial scroll to right:', progressBarsArea.scrollLeft, '/', progressBarsArea.scrollWidth);
+    });
   });
 }
 
