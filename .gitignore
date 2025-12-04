@@ -41,3 +41,7 @@ yarn-error.log*
 
 # Runtime queue data (server state)
 **/nicotine-queue.json
+
+# Claude Code
+.claude/
+CLAUDE.md

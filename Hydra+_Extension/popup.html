@@ -12,7 +12,7 @@
 
     body {
   
-      min-width: 297px;
+      min-width: 420px;
       margin: 0 auto;
       padding: 45px;
       padding-top: 25px;
@@ -385,8 +385,8 @@
 
     .ascii-art {
       font-family: 'Courier New', monospace;
-      font-size: 6px;
-      line-height: 9px;
+      font-size: 4px;
+      line-height: 4px;
       color: #B9FF37;
       white-space: pre;
       margin-bottom: 6px;
@@ -588,7 +588,7 @@
     .progress-bars-area {
       display: flex;
       flex-direction: row;
-      gap: 12px;
+      /*gap: 16px;*/
       flex: 1; /* Take all remaining space */
       height: 100%;
       align-items: flex-end;
@@ -630,14 +630,15 @@
 
     /* Individual vertical progress bar - grows from bottom */
     .vertical-progress-bar {
-      width: 8px;
+      width: 15px;
+      border-right: solid 2px #121212;
       height: 100%;
       position: relative;
       animation: slideInUp 0.3s ease;
-      opacity: 0.8; /* 80% opacity normal state */
+      opacity: 0.7; /* 80% opacity normal state */
       transition: all 0.2s ease;
       cursor: pointer;
-      background-color: rgba(0, 0, 0, 0.3); /* Darker placeholder background for full track */
+      background-color: rgba(0, 0, 0, 0.5); /* Darker placeholder background for full track */
       flex-shrink: 0; /* Don't shrink - allow overflow for scrolling */
       order: var(--position); /* CSS ordering based on fixed position number */
     }
@@ -645,7 +646,7 @@
     /* Increase opacity on hover - no color change */
     .vertical-progress-bar:hover {
       opacity: 1; /* 100% opacity on hover */
-      width: 18px;
+      /*width: 18px;*/
     }
 
     @keyframes slideInUp {
